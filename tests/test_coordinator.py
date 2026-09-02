@@ -108,6 +108,7 @@ async def test_sd_reply_notifies_coordinator_listeners(hass, _patch_login):
     )
 
     assert calls == 1
+    await coordinator.async_shutdown()
     await coordinator.async_disconnect()
 
 

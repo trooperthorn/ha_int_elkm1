@@ -1,7 +1,6 @@
 {
   "domain": "elkm1",
   "name": "Elk-M1 Security",
-  "version": "2026.08.20",
   "codeowners": [
     "@trooperthorn"
   ],
@@ -18,15 +17,16 @@
     }
   ],
   "documentation": "https://github.com/trooperthorn/ha_int_elkm1",
+  "integration_type": "hub",
+  "iot_class": "local_push",
   "issue_tracker": "https://github.com/trooperthorn/ha_int_elkm1/issues",
+  "loggers": [
+    "elkm1_lib"
+  ],
   "requirements": [
     "pyserial==3.5",
     "pyserial-asyncio-fast==0.16",
     "elkm1-lib==2.2.15"
   ],
-  "integration_type": "hub",
-  "iot_class": "local_push",
-  "loggers": [
-    "elkm1_lib"
-  ]
+  "version": "2026.08.20"
 }

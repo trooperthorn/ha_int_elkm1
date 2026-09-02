@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PREFIX, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.util.network import is_ip_address
 
 from .alarmo_integration import async_setup_alarmo_auto_config
@@ -25,6 +25,7 @@ from .const import (
     CONNECTION_NETWORK,
     CONNECTION_SERIAL,
     DEFAULT_POLL_INTERVAL,
+    DOMAIN,
 )
 from .coordinator import ElkDataUpdateCoordinator
 from .discovery import (
@@ -42,6 +43,8 @@ else:
     ElkM1ConfigEntry = ConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS = [
     Platform.ALARM_CONTROL_PANEL,

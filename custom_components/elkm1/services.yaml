@@ -137,16 +137,6 @@ get_security_summary:
       description: Prefix for the panel.
       selector:
         text:
-  response:
-    total_faulted:
-      description: The total number of open zones.
-      example: 2
-    is_ready_to_arm:
-      description: Boolean indicating if the panel can be armed.
-      example: false
-    faulted_zone_numbers:
-      description: A list of the open zone numbers.
-      example: [1, 4]
 
 alarmo_auto_setup:
   name: "Alarmo Auto-Setup"
