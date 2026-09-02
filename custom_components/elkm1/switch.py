@@ -9,7 +9,7 @@ from typing import Any, override
 
 import voluptuous as vol
 from elkm1_lib.const import ThermostatMode, ThermostatSetting
-from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN, SwitchEntity
+from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -28,6 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 # The panel has a single serialized command buffer with no flow control -
 # concurrent writes from multiple entities must not overlap.
 PARALLEL_UPDATES = 1
+SWITCH_DOMAIN = "switch"
 
 SERVICE_SWITCH_OUTPUT_TURN_ON_FOR = "switch_output_turn_on_for"
 
@@ -131,7 +132,7 @@ class ElkArmRequestSwitch(ElkEntity, SwitchEntity):
     @override
     def is_on(self) -> bool:
         """Return the state of the switch."""
-        return self._attr_is_on
+        return bool(self._attr_is_on)
 
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:

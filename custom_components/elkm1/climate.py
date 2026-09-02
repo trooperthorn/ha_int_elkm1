@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar, override
+from typing import Any, override
 
 from elkm1_lib.const import ThermostatFan, ThermostatMode, ThermostatSetting
-from homeassistant.components.climate import (
-    ClimateEntity,
-    ClimateEntityFeature,
-    HVACMode,
-)
+from homeassistant.components.climate import ClimateEntity
+from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
@@ -85,8 +82,6 @@ class ElkThermostat(ElkEntity, ClimateEntity):
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
     _attr_min_temp = MIN_TEMP
     _attr_max_temp = MAX_TEMP
-    _attr_hvac_modes: ClassVar[list[HVACMode]] = list(_HVAC_MODE_TO_ELK)
-    _attr_fan_modes: ClassVar[list[str]] = list(_FAN_TO_ELK)
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
@@ -102,6 +97,8 @@ class ElkThermostat(ElkEntity, ClimateEntity):
         super().__init__(coordinator, config_entry, f"thermostat_{index + 1}")
         self._index = index
         self._attr_unique_id = f"{config_entry.entry_id}_thermostat_{index + 1}"
+        self._attr_hvac_modes = list(_HVAC_MODE_TO_ELK)
+        self._attr_fan_modes = list(_FAN_TO_ELK)
 
     def _get_obj(self) -> Any:
         if self.coordinator.data and self._index < len(self.coordinator.data.thermostats):
@@ -141,7 +138,7 @@ class ElkThermostat(ElkEntity, ClimateEntity):
     @override
     def current_temperature(self) -> float | None:
         obj = self._get_obj()
-        return obj.current_temp if obj else None
+        return float(obj.current_temp) if obj else None
 
     @property
     @override
@@ -149,7 +146,12 @@ class ElkThermostat(ElkEntity, ClimateEntity):
         obj = self._get_obj()
         if not obj or self.hvac_mode not in (HVACMode.HEAT, HVACMode.COOL):
             return None
-        return obj.heat_setpoint if self.hvac_mode == HVACMode.HEAT else obj.cool_setpoint
+        value = (
+            obj.heat_setpoint
+            if self.hvac_mode == HVACMode.HEAT
+            else obj.cool_setpoint
+        )
+        return float(value)
 
     @property
     @override
@@ -157,7 +159,7 @@ class ElkThermostat(ElkEntity, ClimateEntity):
         obj = self._get_obj()
         if not obj or self.hvac_mode != HVACMode.HEAT_COOL:
             return None
-        return obj.cool_setpoint
+        return float(obj.cool_setpoint)
 
     @property
     @override
@@ -165,7 +167,7 @@ class ElkThermostat(ElkEntity, ClimateEntity):
         obj = self._get_obj()
         if not obj or self.hvac_mode != HVACMode.HEAT_COOL:
             return None
-        return obj.heat_setpoint
+        return float(obj.heat_setpoint)
 
     @override
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:

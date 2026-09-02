@@ -4,8 +4,10 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.elkm1.const import CONF_POLL_INTERVAL
+from custom_components.elkm1 import async_migrate_entry
+from custom_components.elkm1.const import CONF_POLL_INTERVAL, DOMAIN
 from custom_components.elkm1.models import ElkPanelData
 
 
@@ -49,3 +51,20 @@ async def test_options_update_reloads_entry(hass, mock_network_entry):
         await hass.async_block_till_done()
 
     assert mock_network_entry.state is ConfigEntryState.LOADED
+
+
+async def test_migrate_legacy_serial_entry(hass):
+    """Legacy serial URLs migrate to explicit transport and stable identity."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"host": "serial:///dev/serial/by-id/elk", "prefix": "elkm1"},
+        version=1,
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry)
+    assert entry.version == 2
+    assert entry.minor_version == 1
+    assert entry.data["connection_type"] == "serial"
+    assert entry.data["serial_port"] == "/dev/serial/by-id/elk"
+    assert entry.unique_id == "serial:/dev/serial/by-id/elk"

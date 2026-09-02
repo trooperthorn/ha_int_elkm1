@@ -6,23 +6,27 @@
     "@trooperthorn"
   ],
   "config_flow": true,
+  "dependencies": [
+    "network"
+  ],
+  "dhcp": [
+    {
+      "registered_devices": true
+    },
+    {
+      "macaddress": "00409D*"
+    }
+  ],
   "documentation": "https://github.com/trooperthorn/ha_int_elkm1",
   "issue_tracker": "https://github.com/trooperthorn/ha_int_elkm1/issues",
   "requirements": [
-    "pyserial>=3.5",
-    "pyserial-asyncio-fast",
+    "pyserial==3.5",
+    "pyserial-asyncio-fast==0.16",
     "elkm1-lib==2.2.15"
   ],
   "integration_type": "hub",
   "iot_class": "local_push",
-  "single_config_entry": true,
-  "data_entry_flow": "handler",
-  "diagnostics": true,
-  "usb": [
-    {"vid": "0403", "pid": "6001"},
-    {"vid": "067B", "pid": "2303"},
-    {"vid": "10C4", "pid": "EA60"},
-    {"vid": "1A86", "pid": "7523"},
-    {"vid": "0403", "pid": "6015"}
+  "loggers": [
+    "elkm1_lib"
   ]
 }

@@ -8,14 +8,11 @@ from .panel_settings import (
     verify_panel_configuration,
 )
 from .troublestatus import format_troubles, parse_troubles
-from .usb_discovery import discover_elk_ports, probe_serial_port
 
 __all__ = [
     "check_panel_version",
     "check_required_settings",
-    "discover_elk_ports",
     "format_troubles",
     "parse_troubles",
-    "probe_serial_port",
     "verify_panel_configuration",
 ]

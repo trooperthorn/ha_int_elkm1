@@ -53,6 +53,19 @@ async def async_get_config_entry_diagnostics(
             "connected": coordinator.connected if coordinator else False,
         },
     }
+    if coordinator is not None:
+        lifecycle = coordinator.transport_diagnostics
+        diagnostics["transport"] = lifecycle
+        diagnostics["health"] = {
+            "push": (
+                "active"
+                if sum(lifecycle["broadcast_counts"].values()) > 0
+                else "not_observed"
+            ),
+            "fallback_poll": (
+                "healthy" if coordinator.last_update_success else "failed"
+            ),
+        }
 
     if data is None:
         return diagnostics

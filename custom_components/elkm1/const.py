@@ -22,6 +22,8 @@ CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_PIN = "pin"
 CONF_BAUD_RATE = "baud_rate"
+CONF_DEVICE_ID = "device_id"
+CONF_MAC_ADDRESS = "mac_address"
 
 CONNECTION_SERIAL = "serial"
 CONNECTION_NETWORK = "network"

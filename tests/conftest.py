@@ -23,12 +23,14 @@ def mock_network_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         data={
+            "connection_type": "network",
             "host": "elk://1.2.3.4",
             "username": "",
             "password": "",
             "prefix": "",
+            "mac_address": "aa:bb:cc:dd:ee:ff",
         },
-        unique_id="AA:BB:CC:DD:EE:FF",
+        unique_id="aa:bb:cc:dd:ee:ff",
     )
 
 
@@ -40,10 +42,12 @@ def mock_serial_entry() -> MockConfigEntry:
         data={
             "connection_type": "serial",
             "serial_port": "/dev/ttyUSB0",
+            "device_id": "serial:/dev/ttyUSB0",
+            "baud_rate": 115200,
             "prefix": "elkm1",
             "pin": "",
         },
-        unique_id="/dev/ttyUSB0",
+        unique_id="serial:/dev/ttyUSB0",
     )
 
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 from elkm1_lib import Elk
 from elkm1_lib.const import ArmLevel
@@ -36,7 +36,7 @@ from .const import (
     COORDINATOR_UPDATE_INTERVAL,
     EVENT_ELKM1_KEYPAD_KEY_PRESSED,
 )
-from .helpers.transport import attach_baud_state
+from .helpers.transport import ElkConnectionManager
 from .helpers.troublestatus import parse_troubles
 from .models import AreaData, ElkPanelData
 from .vocabulary import translate_elk_voice
@@ -79,6 +79,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
 
         self._config_data = config_entry_data
         self._elk: Elk | None = None
+        self._connection_manager: ElkConnectionManager | None = None
         self._connection_type: str = config_entry_data[CONF_CONNECTION_TYPE]
         self._pin: str = str(config_entry_data.get(CONF_PIN, ""))
         self._on_baud_detected = on_baud_detected
@@ -91,6 +92,8 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         self._broadcast_counts: dict[str, int] = dict.fromkeys(
             ("ZC", "CC", "TC", "PC", "KC", "LD"), 0
         )
+        self.last_push_update: datetime | None = None
+        self.last_poll_success: datetime | None = None
         self.data = ElkPanelData()
 
     @property
@@ -102,6 +105,30 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     def connected(self) -> bool:
         """Return True if currently connected to the panel."""
         return self._elk is not None and self._elk.is_connected()
+
+    @property
+    def transport_diagnostics(self) -> dict[str, Any]:
+        """Return redaction-safe connection lifecycle diagnostics."""
+        manager = self._connection_manager
+        return {
+            "transport": self._connection_type,
+            "transport_state": (
+                manager.transport_state if manager is not None else "stopped"
+            ),
+            "detected_baud": manager.detected_baud if manager is not None else None,
+            "login_state": manager.login_state if manager is not None else "unknown",
+            "reconnect_count": manager.reconnect_count if manager is not None else 0,
+            "last_failure_category": (
+                manager.last_failure_category if manager is not None else None
+            ),
+            "last_push_update": (
+                self.last_push_update.isoformat() if self.last_push_update else None
+            ),
+            "last_poll_success": (
+                self.last_poll_success.isoformat() if self.last_poll_success else None
+            ),
+            "broadcast_counts": self.broadcast_counts,
+        }
 
     def _build_connection_url(self) -> str:
         """Build connection URL based on connection type."""
@@ -119,7 +146,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
                 # config_flow already builds a fully scheme-prefixed URL
                 # (elk://, elks://, elksv1_2://) - use it as-is rather than
                 # re-wrapping it in another scheme.
-                return host
+                return str(host)
             port = self._config_data.get(CONF_PORT, 2101)
             return f"elk://{host}:{port}"
 
@@ -153,17 +180,19 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
                 config["password"] = password
 
         elk = Elk(config)
-        attach_baud_state(
+        manager = ElkConnectionManager(
             elk,
             cached_baud=self._config_data.get(CONF_BAUD_RATE),
             on_baud_detected=self._on_baud_detected,
         )
+        self._connection_manager = manager
 
         elk.add_handler("EE", self._handle_timer_event)
         elk.add_handler("AM", self._handle_alarm_memory)
         elk.add_handler("SS", self._handle_trouble_status)
         elk.add_handler("ZD", self._handle_zone_definitions)
         elk.add_handler("SD", self._handle_description_sync)
+        elk.add_handler("disconnected", self._handle_disconnected)
         for msg_type in self._broadcast_counts:
             elk.add_handler(msg_type, self._count_broadcast(msg_type))
         if elk.panel is not None:
@@ -184,36 +213,50 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         login_failed_event = asyncio.Event()
 
         def _on_login(succeeded: bool) -> None:
+            manager.mark_login(succeeded)
             if succeeded:
                 login_succeeded_event.set()
+                if self._elk is not None and self._elk.is_connected():
+                    self.async_set_updated_data(self._build_normalized_data())
             else:
                 login_failed_event.set()
 
         elk.add_handler("login", _on_login)
 
         self._elk = elk
-        elk.connect()
+        manager.start()
 
-        succeeded_task = asyncio.ensure_future(login_succeeded_event.wait())
-        failed_task = asyncio.ensure_future(login_failed_event.wait())
+        succeeded_task = asyncio.create_task(
+            login_succeeded_event.wait(), name="elkm1-login-success"
+        )
+        failed_task = asyncio.create_task(
+            login_failed_event.wait(), name="elkm1-login-failure"
+        )
         try:
             done, _pending = await asyncio.wait(
                 (succeeded_task, failed_task),
                 timeout=CONNECT_TIMEOUT,
                 return_when=asyncio.FIRST_COMPLETED,
             )
+        except BaseException:
+            await manager.async_stop()
+            self._elk = None
+            raise
         finally:
             for task in (succeeded_task, failed_task):
                 if not task.done():
                     task.cancel()
+            await asyncio.gather(
+                succeeded_task, failed_task, return_exceptions=True
+            )
 
         if failed_task in done:
-            elk.disconnect()
+            await manager.async_stop()
             self._elk = None
             raise ConfigEntryAuthFailed("Elk-M1 rejected the configured username/password")
 
         if succeeded_task not in done:
-            elk.disconnect()
+            await manager.async_stop()
             self._elk = None
             raise UpdateFailed(
                 f"Timed out connecting to Elk-M1 at {self._obfuscated_url()}"
@@ -268,8 +311,15 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
 
         def _handler(**_kwargs: Any) -> None:
             self._broadcast_counts[msg_type] += 1
+            self.last_push_update = datetime.now(UTC)
 
         return _handler
+
+    def _handle_disconnected(self, **_kwargs: Any) -> None:
+        """Mark entities unavailable while the entry-owned task reconnects."""
+        if self._connection_manager is not None:
+            self._connection_manager.mark_disconnected()
+        self.async_set_update_error(UpdateFailed("ELK-M1 transport disconnected"))
 
     def _handle_timer_event(
         self, area: int, is_exit: bool, timer1: int, timer2: int, armed_status: Any
@@ -306,7 +356,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             return
         for zone_index, definition in enumerate(zone_definitions):
             if self._get_enum_value(definition) == 34:
-                self._elk.zones[zone_index].get_voltage()
+                cast(Any, self._elk.zones[zone_index]).get_voltage()
 
     def _handle_description_sync(
         self, desc_type: int, unit: int, desc: str, show_on_keypad: bool
@@ -339,9 +389,11 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
 
     async def async_disconnect(self) -> None:
         """Disconnect from ELK-M1 panel."""
-        if self._elk:
+        manager = self._connection_manager
+        self._connection_manager = None
+        if manager is not None:
             try:
-                self._elk.disconnect()
+                await manager.async_stop()
                 _LOGGER.info("Disconnected from ELK-M1")
             except (OSError, AttributeError) as err:
                 _LOGGER.error("Error disconnecting: %s", err)
@@ -375,11 +427,11 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         for area in configured_areas:
             t1 = getattr(area, "timer1", 0)
             t2 = getattr(area, "timer2", 0)
-            armed_val = self._get_enum_value(area.armed_status)
+            armed_val = self._get_enum_value(area.armed_status)  # type: ignore[attr-defined]
             areas_dict[area.index] = AreaData(
-                alarm_state=self._get_enum_value(area.alarm_state),
+                alarm_state=self._get_enum_value(area.alarm_state),  # type: ignore[attr-defined]
                 armed_status=armed_val,
-                arm_up_state=self._get_enum_value(area.arm_up_state),
+                arm_up_state=self._get_enum_value(area.arm_up_state),  # type: ignore[attr-defined]
                 timer1=t1,
                 timer2=t2,
                 entry_delay_active=(t1 > 0 and armed_val != 0),
@@ -396,8 +448,8 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         for zone in zones:
             if not zone.configured:
                 continue
-            logical = self._get_enum_value(zone.logical_status)
-            definition = self._get_enum_value(zone.definition)
+            logical = self._get_enum_value(zone.logical_status)  # type: ignore[attr-defined]
+            definition = self._get_enum_value(zone.definition)  # type: ignore[attr-defined]
 
             # ZoneLogicalStatus: 0=normal, 1=trouble, 2=violated, 3=bypassed
             # (only 4 values - not the "violated-and-bypassed=5" this used
@@ -413,14 +465,14 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         active_outputs: list[int] = []
         active_output_names: list[str] = []
         for output in outputs:
-            if output.configured and output.output_on:
+            if output.configured and output.output_on:  # type: ignore[attr-defined]
                 active_outputs.append(output.index)
                 active_output_names.append(f"Output {output.index + 1}: {output.name}")
 
         panel_temp = None
         for zone in zones:
-            if zone.configured and zone.temperature > -60:
-                panel_temp = zone.temperature
+            if zone.configured and zone.temperature > -60:  # type: ignore[attr-defined]
+                panel_temp = zone.temperature  # type: ignore[attr-defined]
                 break
 
         is_any_armed = any(a.armed_status != 0 for a in areas_dict.values())
@@ -462,6 +514,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         """Safety-net resync; the primary data path is push via element callbacks."""
         if not self._elk or not self._elk.is_connected():
             raise UpdateFailed("Not connected to Elk-M1")
+        self.last_poll_success = datetime.now(UTC)
         return self._build_normalized_data()
 
     # ---- STANDARDIZED ALARM CONTROL PANEL METHODS ----
@@ -507,7 +560,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         if not self._elk:
             return False
         active_pin = code if code > 0 else int(self._pin or 0)
-        area = self._elk.areas[area_index]
+        area = cast(Any, self._elk.areas[area_index])
         if level == ArmLevel.DISARM:
             area.disarm(active_pin)
         else:
@@ -521,7 +574,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         if not self._elk:
             return False
         active_pin = int(pin_code) if pin_code else int(self._pin or 0)
-        self._elk.zones[zone_number - 1].bypass(active_pin)
+        cast(Any, self._elk.zones[zone_number - 1]).bypass(active_pin)
         return True
 
     async def unbypass_zone(self, zone_number: int, pin_code: str | None = None) -> bool:
@@ -543,7 +596,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         if not self._elk:
             return False
         active_pin = int(pin_code) if pin_code else int(self._pin or 0)
-        self._elk.areas[area_index].bypass(active_pin)
+        cast(Any, self._elk.areas[area_index]).bypass(active_pin)
         return True
 
     async def display_message(
@@ -558,7 +611,9 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         """Display a message on all keypads in an area via Area.display_message()."""
         if not self._elk:
             return False
-        self._elk.areas[area_index].display_message(clear, beep, timeout, line1, line2)
+        cast(Any, self._elk.areas[area_index]).display_message(
+            clear, beep, timeout, line1, line2
+        )
         return True
 
     async def speak_word(self, word: int) -> bool:

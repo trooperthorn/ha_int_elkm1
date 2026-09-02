@@ -1,105 +1,119 @@
-"""Network discovery helpers for Elk-M1 integration."""
+"""Network discovery helpers for the Elk-M1 integration."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from dataclasses import asdict
+from urllib.parse import urlsplit, urlunsplit
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from elkm1_lib.discovery import AIOELKDiscovery, ElkSystem
+from homeassistant import config_entries
+from homeassistant.components import network
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr, discovery_flow
+
+from .const import CONF_HOST, CONF_MAC_ADDRESS, DISCOVER_SCAN_TIMEOUT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-class ElkUDPDiscoveryProtocol(asyncio.DatagramProtocol):
-    """Native Asyncio UDP protocol to broadcast and listen for Elk M1XEP modules."""
 
-    def __init__(self, target_event: asyncio.Event, devices: list[dict[str, Any]]):
-        self.target_event = target_event
-        self.devices = devices
+def _short_mac(mac_address: str) -> str:
+    """Return the final six hexadecimal characters of a MAC address."""
+    return mac_address.replace(":", "").replace("-", "")[-6:]
 
-    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Handle incoming M1XEP broadcast responses."""
-        try:
-            # The Elk panel responds to network discovery with its MAC and details
-            message = data.decode("ascii", errors="ignore")
-            if message.startswith("M1XEP"):
-                # Parse basic info (typically MAC address follows the identifier)
-                parts = message.split()
-                mac = parts[1] if len(parts) > 1 else "Unknown"
 
-                device_info = {
-                    "ip_address": addr[0],
-                    "port": addr[1],
-                    "mac_address": mac,
-                }
+def _endpoint_with_host(endpoint: str, host: str) -> str:
+    """Replace only the host portion of an ELK endpoint."""
+    parsed = urlsplit(endpoint)
+    if not parsed.scheme:
+        return endpoint
+    netloc = host if parsed.port is None else f"{host}:{parsed.port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
-                # Prevent duplicates
-                if not any(d["ip_address"] == addr[0] for d in self.devices):
-                    self.devices.append(device_info)
-                    _LOGGER.debug("Discovered Elk-M1 module at %s:%s", addr[0], addr[1])
 
-        except Exception as e:
-            _LOGGER.debug("Error parsing UDP discovery response: %s", e)
+@callback
+def async_update_entry_from_discovery(
+    hass: HomeAssistant,
+    entry: config_entries.ConfigEntry,
+    device: ElkSystem,
+) -> bool:
+    """Apply identity and address updates from a verified ELK discovery."""
+    formatted_mac = dr.format_mac(device.mac_address)
+    if entry.unique_id and entry.unique_id != formatted_mac:
+        return False
+
+    data = dict(entry.data)
+    if data.get(CONF_MAC_ADDRESS) != formatted_mac:
+        data[CONF_MAC_ADDRESS] = formatted_mac
+
+    endpoint = data.get(CONF_HOST)
+    if isinstance(endpoint, str):
+        updated_endpoint = _endpoint_with_host(endpoint, device.ip_address)
+        if updated_endpoint != endpoint:
+            data[CONF_HOST] = updated_endpoint
+
+    unique_id = entry.unique_id or formatted_mac
+    if data == dict(entry.data) and unique_id == entry.unique_id:
+        return False
+    return hass.config_entries.async_update_entry(
+        entry, data=data, unique_id=unique_id
+    )
+
 
 async def async_discover_devices(
     hass: HomeAssistant,
-    entry: ConfigEntry | None = None,
-) -> list[Any]:
-    """Discover all Elk-M1 device elements."""
-    devices: list[dict[str, Any]] = []
-    discovery_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    timeout = 5.0
+    timeout: int = DISCOVER_SCAN_TIMEOUT,
+    address: str | None = None,
+) -> list[ElkSystem]:
+    """Discover ELK M1XEP interfaces using the upstream library."""
+    if address:
+        targets = [address]
+    else:
+        targets = [
+            str(broadcast_address)
+            for broadcast_address in await network.async_get_ipv4_broadcast_addresses(
+                hass
+            )
+        ]
 
-    try:
-        # Elk M1XEP listens for UDP broadcasts on port 2362
-        transport, _ = await loop.create_datagram_endpoint(
-            lambda: ElkUDPDiscoveryProtocol(discovery_event, devices),
-            local_addr=("0.0.0.0", 0),
-        )
+    scanner = AIOELKDiscovery()
+    combined: dict[str, ElkSystem] = {}
+    results = await asyncio.gather(
+        *[
+            scanner.async_scan(timeout=timeout, address=target)
+            for target in targets
+        ],
+        return_exceptions=True,
+    )
+    for target, result in zip(targets, results, strict=True):
+        if isinstance(result, Exception):
+            _LOGGER.debug("ELK discovery scan of %s failed: %s", target, result)
+            continue
+        if isinstance(result, BaseException):
+            raise result from None
+        for device in result:
+            combined[device.ip_address] = device
+    return list(combined.values())
 
-        try:
-            # Broadcast the M1XEP discovery string
-            discovery_payload = b"\xE4\xE4\r\n"
-            transport.sendto(discovery_payload, ("255.255.255.255", 2362))
 
-            # Wait for responses
-            await asyncio.sleep(timeout)
-
-        finally:
-            transport.close()
-
-    except Exception as e:
-        _LOGGER.debug("Network discovery failed: %s", e)
-
-    return devices
-
-async def async_discover_device(
-    hass: HomeAssistant, entry: ConfigEntry, connection_type: str, port: int
-) -> dict[str, Any] | None:
-    """Discover a single Elk-M1 device (Used by __init__.py)."""
-    devices = await async_discover_devices(hass, entry)
-    for device in devices:
-        if device.get("port") == port or connection_type == "network":
+async def async_discover_device(hass: HomeAssistant, host: str) -> ElkSystem | None:
+    """Run directed discovery against one host."""
+    for device in await async_discover_devices(hass, DISCOVER_SCAN_TIMEOUT, host):
+        if device.ip_address == host:
             return device
     return None
 
-async def async_update_entry_from_discovery(
-    hass: HomeAssistant, entry: ConfigEntry, device: dict[str, Any]
+
+@callback
+def async_trigger_discovery(
+    hass: HomeAssistant, discovered_devices: list[ElkSystem]
 ) -> None:
-    """Update a config entry from discovery data (Used by __init__.py)."""
-    changed = False
-
-    if "mac_address" in device and not entry.unique_id:
-        hass.config_entries.async_update_entry(
-            entry, unique_id=_short_mac(device["mac_address"])
+    """Start integration-discovery flows for discovered devices."""
+    for device in discovered_devices:
+        discovery_flow.async_create_flow(
+            hass,
+            DOMAIN,
+            context={"source": config_entries.SOURCE_INTEGRATION_DISCOVERY},
+            data=asdict(device),
         )
-        changed = True
-
-    if changed:
-        _LOGGER.debug("Updated Elk-M1 entry %s from discovery", entry.entry_id)
-
-def _short_mac(mac: str) -> str:
-    """Format a MAC address to a short, colon-less string."""
-    return mac.replace(":", "").replace("-", "").lower()

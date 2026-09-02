@@ -36,13 +36,16 @@ def _make_coordinator(hass, **data_overrides) -> ElkDataUpdateCoordinator:
 
 @pytest.fixture
 def _patch_login(request):
-    """Patch elkm1_lib.Elk.connect to synchronously fire a login notification."""
+    """Patch the entry-owned manager to synchronously fire login."""
     succeeded = request.param
 
-    def fake_connect(self) -> None:
-        self._notifier.notify("login", {"succeeded": succeeded})
+    def fake_start(self) -> None:
+        self.elk._notifier.notify("login", {"succeeded": succeeded})
 
-    with patch("elkm1_lib.Elk.connect", fake_connect):
+    with patch(
+        "custom_components.elkm1.coordinator.ElkConnectionManager.start",
+        fake_start,
+    ):
         yield
 
 
@@ -52,6 +55,7 @@ async def test_async_setup_succeeds_on_login_success(hass, _patch_login):
     coordinator = _make_coordinator(hass)
     await coordinator._async_setup()
     assert coordinator._elk is not None
+    await coordinator.async_disconnect()
 
 
 @pytest.mark.parametrize("_patch_login", [False], indirect=True)
@@ -65,7 +69,10 @@ async def test_async_setup_raises_auth_failed_on_login_failure(hass, _patch_logi
 
 async def test_async_setup_raises_update_failed_on_timeout(hass):
     """No login event at all (dead link) raises UpdateFailed, not a silent hang."""
-    with patch("elkm1_lib.Elk.connect", lambda self: None):
+    with patch(
+        "custom_components.elkm1.coordinator.ElkConnectionManager.start",
+        lambda self: None,
+    ):
         coordinator = _make_coordinator(hass)
         from custom_components.elkm1 import coordinator as coordinator_module
 
@@ -101,6 +108,7 @@ async def test_sd_reply_notifies_coordinator_listeners(hass, _patch_login):
     )
 
     assert calls == 1
+    await coordinator.async_disconnect()
 
 
 async def test_poll_interval_is_configurable(hass):

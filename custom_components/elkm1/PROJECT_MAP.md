@@ -13,10 +13,11 @@ objects (`Area`, `Zone`, `Output`, `Task`, `Thermostat`, `Light`, `Counter`, `Se
 `Output.turn_on()`, etc.). This integration reuses all of that rather than
 reimplementing the protocol.
 
-The one thing replaced is `elkm1_lib.connection.Connection.connect()` - `helpers/
-transport.py` monkeypatches it at the class level (subclassing isn't an option, since
-`Elk.__init__` constructs the `Connection` itself before any injection point exists) to
-add host-side baud-rate auto-detection for serial connections
+The one thing replaced is each entry's bound
+`elkm1_lib.connection.Connection.connect()` method. `helpers/transport.py` installs the
+replacement on that connection instance only; it never changes the process-global
+class. The entry-owned manager supervises open, streams, bounded reconnect backoff,
+cancellation, and awaited close while adding host-side baud-rate auto-detection
 (`helpers/baud_probe.py`: sweep the standard rates, confirm with a real `vn`
 version-request round-trip, cache the winning rate on the config entry). Network
 connections are unaffected - TCP has no baud rate to detect.
@@ -35,7 +36,8 @@ correctly.
 * `__init__.py` - config entry lifecycle: builds the connection URL, constructs the
   coordinator, runs `verify_panel_configuration` as a background diagnostic task,
   forwards platform setup, and registers the options-reload listener.
-* `config_flow.py` - user/manual-network/serial config steps, DHCP and USB discovery,
+* `config_flow.py` - connection-method/network/manual-network/serial config steps, DHCP
+  and upstream ELK network discovery,
   and the options/reconfigure/reauth flows.
 * `coordinator.py` - connection setup, push-callback registration per message type,
   the normalized `ElkPanelData` snapshot builder, and command methods (arm/disarm,
@@ -55,12 +57,13 @@ correctly.
   uses this instead of a single one-shot `async_add_entities` pass).
 
 ### Helpers (`helpers/`)
-* `transport.py` - the baud-probe monkeypatch, plus `validate_serial_port()`/
+* `transport.py` - the entry-owned connection manager, plus `validate_serial_port()`/
   `validate_network_connection()` used by the config flow to verify a connection before
   creating an entry.
 * `baud_probe.py` - the baud-rate sweep itself.
-* `usb_discovery.py` - OS serial port enumeration, `/dev/serial/by-id/` resolution, and
-  `KNOWN_ADAPTERS` (VID:PID values used by `manifest.json`'s `usb` discovery key).
+* Linux persistent-path normalization lives in `config_flow.py` and prefers `by-id`,
+  then `by-path`. Generic USB bridge VID/PID discovery is intentionally absent because
+  it cannot identify an adapter as an ELK product.
 * `panel_settings.py` - `verify_panel_configuration()`: since the protocol has no way
   to read back Global Programming's "Xmit ... Changes" broadcast-enable bits, this
   empirically infers whether they're on by watching for broadcasts after connecting,

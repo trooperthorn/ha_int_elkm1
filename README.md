@@ -2,7 +2,7 @@
 
 ![GitHub Release](https://img.shields.io/github/v/release/trooperthorn/ha_int_elkm1?style=for-the-badge)
 ![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)
-![Home Assistant](https://img.shields.io/badge/Home_Assistant-2026.5+-blue.svg?style=for-the-badge)
+![Home Assistant](https://img.shields.io/badge/Home_Assistant-2026.8.3-blue.svg?style=for-the-badge)
 
 A Home Assistant custom integration for **Elk-M1 Gold** and **M1EZ8** security/automation
 control panels, connected over the network (M1XEP module) or a direct serial/USB cable.
@@ -14,8 +14,8 @@ Products, Inc.*
 
 The integration uses [`elkm1-lib`](https://github.com/gwww/elkm1) for the Elk-M1 ASCII
 protocol - message encoding/decoding and the panel's typed subsystem objects (areas,
-zones, outputs, tasks, thermostats, lights, counters, keypads) - and replaces only its
-transport layer with a native `asyncio` implementation, so that serial connections can be
+zones, outputs, tasks, thermostats, lights, counters, keypads). Each config entry owns a
+single native `asyncio` connection/reconnect task, so serial connections can be
 opened with automatic baud-rate detection (the protocol has no way to query or negotiate
 baud rate on the wire; a Global Programming setting fixes it at 9600-115200, so on
 connect the integration sweeps the standard rates and locks onto whichever one gets a
@@ -28,9 +28,13 @@ entry) is a fallback for panels that have broadcasts disabled, not the primary d
 
 ## Requirements
 
-* Home Assistant 2026.5 or newer, on Python 3.13+.
+* Home Assistant 2026.8.3 on Python 3.14.2 or newer.
 * An Elk-M1 Security Panel connected via an M1XEP Ethernet module, or a direct
   serial/USB cable.
+
+Direct serial currently uses pinned `pyserial-asyncio-fast`; the planned dependency
+transition is to Home Assistant's `serialx` stack. The legacy `pyserial-asyncio`
+package is intentionally not installed alongside it.
 
 ## Installation
 
@@ -48,13 +52,16 @@ entry) is a fallback for panels that have broadcasts disabled, not the primary d
 ### Setup
 1. In Home Assistant, go to **Settings > Devices & Services > Add Integration** and
    search for **Elk-M1**.
-2. Choose a discovered panel, **Manual Network Entry**, or **USB / Serial Port
-   Discovery**. Network connections that support M1XEP's UDP discovery beacon and
-   serial adapters with a recognized USB VID:PID (see `manifest.json`'s `usb` key) are
-   found automatically; either path can also be entered manually.
+2. Follow **Connection method > Interface or discovered panel > Verify ELK-M1 > ELK
+   options > Complete**. Network discovery, manual network entry, and direct Serial/USB
+   remain separate choices. Serial uses Home Assistant's serial-port selector and only
+   the selected port is probed.
 3. For a network connection, the panel's username/password (for secure schemes) are
    verified with a real, briefly-lived connection before the entry is created. For
-   serial, the port is probed the same way, sweeping baud rates automatically.
+   serial, the selected port is probed with an ELK `vn` request while sweeping baud
+   rates automatically. Generic USB chip VID/PID pairs are intentionally not advertised
+   as ELK devices; choose the adapter explicitly unless product-specific metadata is
+   available.
 
 Afterward, **Settings > Devices & Services > Elk-M1 > Configure** lets you change the
 poll-interval fallback, and **Reconfigure** lets you change the connection itself
@@ -142,3 +149,7 @@ filing an issue.
 suite in `tests/`. `custom_components/elkm1/quality_scale.yaml` tracks this
 integration's status against Home Assistant's quality scale honestly - rules are marked
 `todo` with a real reason rather than `done` until actually verified.
+
+Hardware release qualification is deliberately separate from mocked CI. See
+[`docs/live_qualification.md`](docs/live_qualification.md); a passing config-flow test
+does not prove a live secure/non-secure XEP or serial panel connection.

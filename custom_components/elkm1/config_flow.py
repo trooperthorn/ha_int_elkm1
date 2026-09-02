@@ -1,20 +1,15 @@
-"""Config flow for Elk-M1 Control integration."""
+"""Config flow for Elk-M1 Control."""
 
 from __future__ import annotations
 
 import glob
 import logging
 import os
-from typing import Any, Self
-
-try:
-    from typing import override
-except ImportError:
-    from typing import override
-
+from typing import Any, Self, override
 from urllib.parse import urlparse
 
 import voluptuous as vol
+from elkm1_lib.discovery import ElkSystem
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -34,25 +29,31 @@ from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, selector
 from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
-from homeassistant.helpers.service_info.usb import UsbServiceInfo
 from homeassistant.helpers.typing import DiscoveryInfoType, VolDictType
 from homeassistant.util import slugify
 
 from .const import (
     CONF_AUTO_CONFIGURE,
+    CONF_BAUD_RATE,
     CONF_CONNECTION_TYPE,
+    CONF_DEVICE_ID,
+    CONF_MAC_ADDRESS,
     CONF_PIN,
     CONF_POLL_INTERVAL,
     CONF_SERIAL_PORT,
+    CONNECTION_NETWORK,
     CONNECTION_SERIAL,
     DEFAULT_POLL_INTERVAL,
+    DISCOVER_SCAN_TIMEOUT,
     DOMAIN,
     MAX_POLL_INTERVAL,
     MIN_POLL_INTERVAL,
 )
 from .discovery import (
     _short_mac,
+    async_discover_device,
     async_discover_devices,
+    async_update_entry_from_discovery,
 )
 from .helpers.transport import (
     ConnectionTimeoutError,
@@ -60,12 +61,14 @@ from .helpers.transport import (
     validate_network_connection,
     validate_serial_port,
 )
-from .helpers.usb_discovery import probe_serial_port
 
 NON_SECURE_PORT = 2101
 SECURE_PORT = 2601
 STANDARD_PORTS = {NON_SECURE_PORT, SECURE_PORT}
-CONF_VERIFY_DEVICE = "verify_device"
+
+METHOD_NETWORK = "network"
+METHOD_SERIAL = "serial"
+MANUAL_NETWORK = "manual_network"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,338 +76,270 @@ PROTOCOL_MAP = {
     "secure": "elks://",
     "TLS 1.2": "elksv1_2://",
     "non-secure": "elk://",
-    "serial": "serial://",
 }
-
-BASE_SCHEMA: VolDictType = {
-    vol.Optional(CONF_USERNAME, default=""): str,
-    vol.Optional(CONF_PASSWORD, default=""): str,
-}
-
 SECURE_PROTOCOLS = ["secure", "TLS 1.2"]
-ALL_PROTOCOLS = [*SECURE_PROTOCOLS, "non-secure", "serial"]
-
+NETWORK_PROTOCOLS = [*SECURE_PROTOCOLS, "non-secure"]
 DEFAULT_SECURE_PROTOCOL = "secure"
 DEFAULT_NON_SECURE_PROTOCOL = "non-secure"
-
 PORT_PROTOCOL_MAP = {
     NON_SECURE_PORT: DEFAULT_NON_SECURE_PROTOCOL,
     SECURE_PORT: DEFAULT_SECURE_PROTOCOL,
 }
+BASE_NETWORK_SCHEMA: VolDictType = {
+    vol.Optional(CONF_USERNAME, default=""): str,
+    vol.Optional(CONF_PASSWORD, default=""): str,
+}
+
 
 def hostname_from_url(url: str) -> str:
-    """Return the hostname from a url."""
+    """Return the hostname from an ELK URL."""
     parsed = urlparse(url)
     return parsed.hostname or url.replace("serial://", "")
 
+
 def get_persistent_port_path(device_path: str) -> str:
-    """Map a raw /dev/ttyUSBx path to its persistent /dev/serial/by-id/ symlink."""
+    """Prefer Linux by-id, then by-path, for a selected serial endpoint."""
     try:
         resolved_target = os.path.realpath(device_path)
     except OSError:
         return device_path
 
-    for symlink in glob.glob("/dev/serial/by-id/*"):
-        try:
-            if os.path.realpath(symlink) == resolved_target:
-                return symlink
-        except OSError:
-            continue
-
-    for symlink in glob.glob("/dev/serial/by-path/*"):
-        try:
-            if os.path.realpath(symlink) == resolved_target:
-                return symlink
-        except OSError:
-            continue
-
+    for directory in ("/dev/serial/by-id", "/dev/serial/by-path"):
+        for symlink in glob.glob(f"{directory}/*"):
+            try:
+                if os.path.realpath(symlink) == resolved_target:
+                    return symlink
+            except OSError:
+                continue
     return device_path
 
 
-async def validate_input(data: dict[str, str], mac: str | None) -> dict[str, str]:
-    """Validate the user input by opening a real, briefly-lived connection."""
-    userid = data.get(CONF_USERNAME)
-    password = data.get(CONF_PASSWORD)
-    prefix = data.get(CONF_PREFIX, "")
+def _make_url_from_data(data: dict[str, Any]) -> str:
+    """Build a canonical network URL from flow input."""
+    if host := data.get(CONF_HOST):
+        return str(host)
+    protocol = PROTOCOL_MAP[data[CONF_PROTOCOL]]
+    return f"{protocol}{data[CONF_ADDRESS]}"
+
+
+def _address_from_discovery(device: ElkSystem) -> str:
+    """Append a discovered port only when it is non-standard."""
+    if device.port in STANDARD_PORTS:
+        return device.ip_address
+    return f"{device.ip_address}:{device.port}"
+
+
+def _placeholders_from_device(device: ElkSystem) -> dict[str, str]:
+    return {
+        "mac_address": _short_mac(device.mac_address),
+        "host": _address_from_discovery(device),
+    }
+
+
+def _protocol_from_url(url: str) -> str:
+    """Return the flow protocol name represented by a canonical URL."""
+    return next(
+        (name for name, prefix in PROTOCOL_MAP.items() if url.startswith(prefix)),
+        DEFAULT_SECURE_PROTOCOL,
+    )
+
+
+async def validate_input(data: dict[str, Any], mac: str | None) -> dict[str, str]:
+    """Verify a live network panel and distinguish auth from transport failure."""
+    userid = str(data.get(CONF_USERNAME, ""))
+    password = str(data.get(CONF_PASSWORD, ""))
+    prefix = str(data.get(CONF_PREFIX, ""))
     url = _make_url_from_data(data)
 
-    requires_password = url.startswith(("elks://", "elksv1_2"))
-    if requires_password and (not userid or not password):
+    if url.startswith(("elks://", "elksv1_2://")) and (not userid or not password):
         raise InvalidAuth
-
     try:
-        if url.startswith("serial://"):
-            await validate_serial_port(url.removeprefix("serial://"))
-        else:
-            await validate_network_connection(url, userid, password)
+        await validate_network_connection(url, userid, password)
     except InvalidAuthError as exc:
         raise InvalidAuth from exc
     except (ConnectionTimeoutError, OSError) as exc:
         raise CannotConnect from exc
 
     short_mac = _short_mac(mac) if mac else None
-
     if prefix and prefix != short_mac:
-        device_name = prefix
+        title = prefix
     elif mac:
-        device_name = f"ElkM1 {short_mac}"
+        title = f"ElkM1 {short_mac}"
     else:
-        device_name = "ElkM1"
-
-    return {"title": device_name, CONF_HOST: url, CONF_PREFIX: slugify(prefix)}
-
-
-def _address_from_discovery(device: dict[str, Any]) -> str:
-    """Append the port only if its non-standard."""
-    port = device.get("port", NON_SECURE_PORT)
-    ip_addr = device.get("ip_address", "")
-    if port in STANDARD_PORTS:
-        return ip_addr
-    return f"{ip_addr}:{port}"
-
-
-def _make_url_from_data(data: dict[str, str]) -> str:
-    if host := data.get(CONF_HOST):
-        return host
-
-    protocol = PROTOCOL_MAP.get(data.get(CONF_PROTOCOL, "serial"), "serial://")
-    address = data.get(CONF_ADDRESS, data.get("serial_port", ""))
-    return f"{protocol}{address}"
-
-
-def _placeholders_from_device(device: dict[str, Any]) -> dict[str, str]:
-    return {
-        "mac_address": _short_mac(device.get("mac_address", "")),
-        "host": _address_from_discovery(device),
-    }
+        title = "ElkM1"
+    return {"title": title, CONF_HOST: url, CONF_PREFIX: slugify(prefix)}
 
 
 class Elkm1ConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Elk-M1 Control."""
+    """Handle the Elk-M1 configuration and identity contract."""
 
-    VERSION = 1
+    VERSION = 2
+    MINOR_VERSION = 1
+
     host: str | None = None
 
     def __init__(self) -> None:
-        """Initialize the elkm1 config flow."""
-        self._discovered_device: dict[str, Any] | None = None
-        self._discovered_devices: dict[str, dict[str, Any]] = {}
-        self._discovered_serial_port: str | None = None
+        self._discovered_device: ElkSystem | None = None
+        self._discovered_devices: dict[str, ElkSystem] = {}
+        self._pending_data: dict[str, Any] | None = None
+        self._pending_title: str | None = None
 
     @staticmethod
     @callback
-    def async_get_options_flow(
-        config_entry: ConfigEntry,
-    ) -> ElkOptionsFlowHandler:
-        """Create the options flow."""
+    def async_get_options_flow(_config_entry: ConfigEntry) -> ElkOptionsFlowHandler:
+        """Return the operational options flow."""
         return ElkOptionsFlowHandler()
+
+    @override
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select the transport before selecting a specific interface."""
+        if user_input is not None:
+            if user_input[CONF_CONNECTION_TYPE] == METHOD_SERIAL:
+                return await self.async_step_serial()
+            return await self.async_step_network()
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CONNECTION_TYPE): vol.In(
+                        {
+                            METHOD_NETWORK: "Network / M1XEP",
+                            METHOD_SERIAL: "Direct Serial / USB",
+                        }
+                    )
+                }
+            ),
+        )
+
+    async def async_step_network(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select a discovered network panel or manual network entry."""
+        if user_input is not None:
+            selected = user_input[CONF_DEVICE]
+            if selected == MANUAL_NETWORK:
+                return await self.async_step_manual_connection()
+            await self.async_set_unique_id(selected, raise_on_progress=False)
+            self._abort_if_unique_id_configured()
+            self._discovered_device = self._discovered_devices[selected]
+            return await self.async_step_discovered_connection()
+
+        current_ids = self._async_current_ids(include_ignore=False)
+        current_hosts = {
+            hostname_from_url(str(entry.data.get(CONF_HOST, "")))
+            for entry in self._async_current_entries(include_ignore=False)
+        }
+        devices = await async_discover_devices(self.hass, DISCOVER_SCAN_TIMEOUT)
+        self._discovered_devices = {
+            dr.format_mac(device.mac_address): device for device in devices
+        }
+        choices = {
+            mac: f"{_short_mac(device.mac_address)} ({device.ip_address})"
+            for mac, device in self._discovered_devices.items()
+            if mac not in current_ids and device.ip_address not in current_hosts
+        }
+        choices[MANUAL_NETWORK] = "Manual Network Entry"
+        return self.async_show_form(
+            step_id="network",
+            data_schema=vol.Schema({vol.Required(CONF_DEVICE): vol.In(choices)}),
+        )
 
     @override
     async def async_step_dhcp(
         self, discovery_info: DhcpServiceInfo
     ) -> ConfigFlowResult:
-        """Handle discovery via dhcp."""
-        self._discovered_device = {
-            "mac_address": discovery_info.macaddress,
-            "ip_address": discovery_info.ip,
-            "port": 0
-        }
+        """Handle DHCP discovery."""
+        self._discovered_device = ElkSystem(
+            discovery_info.macaddress, discovery_info.ip, 0
+        )
         return await self._async_handle_discovery()
 
     @override
     async def async_step_integration_discovery(
         self, discovery_info: DiscoveryInfoType
     ) -> ConfigFlowResult:
-        """Handle integration discovery."""
-        self._discovered_device = {
-            "mac_address": discovery_info["mac_address"],
-            "ip_address": discovery_info["ip_address"],
-            "port": discovery_info.get("port", NON_SECURE_PORT),
-        }
+        """Handle an upstream ELK library discovery."""
+        self._discovered_device = ElkSystem(
+            str(discovery_info["mac_address"]),
+            str(discovery_info["ip_address"]),
+            int(discovery_info["port"]),
+        )
         return await self._async_handle_discovery()
 
     async def _async_handle_discovery(self) -> ConfigFlowResult:
-        """Handle any discovery."""
+        """Deduplicate and confirm an automatically discovered panel."""
         device = self._discovered_device
         assert device is not None
-        mac = dr.format_mac(device["mac_address"])
-        host = device["ip_address"]
+        mac = dr.format_mac(device.mac_address)
+        self.host = device.ip_address
         await self.async_set_unique_id(mac)
 
         for entry in self._async_current_entries(include_ignore=False):
-            if (
-                entry.unique_id == mac
-                or hostname_from_url(entry.data.get(CONF_HOST, "")) == host
-            ):
+            if entry.unique_id == mac:
+                if async_update_entry_from_discovery(self.hass, entry, device):
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
                 return self.async_abort(reason="already_configured")
-
-        self.host = host
-
         if self.hass.config_entries.flow.async_has_matching_flow(self):
             return self.async_abort(reason="already_in_progress")
-
         self._abort_if_unique_id_configured()
 
+        if not device.port:
+            device = await async_discover_device(self.hass, device.ip_address)
+            if device is None:
+                return self.async_abort(reason="cannot_connect")
+            self._discovered_device = device
         return await self.async_step_discovery_confirm()
 
     @override
-    async def async_step_usb(self, discovery_info: UsbServiceInfo) -> ConfigFlowResult:
-        """Handle discovery via USB."""
-        port = await self.hass.async_add_executor_job(
-            get_persistent_port_path, discovery_info.device
-        )
-        await self.async_set_unique_id(port)
-        self._abort_if_unique_id_configured()
-
-        for entry in self._async_current_entries(include_ignore=False):
-            if entry.data.get(CONF_SERIAL_PORT) == port:
-                return self.async_abort(reason="already_configured")
-
-        if self.hass.config_entries.flow.async_has_matching_flow(self):
-            return self.async_abort(reason="already_in_progress")
-
-        if not await probe_serial_port(port, timeout=12.0):
-            return self.async_abort(reason="cannot_connect")
-
-        self._discovered_serial_port = port
-        self.context["title_placeholders"] = {"port": port}
-        return await self.async_step_usb_confirm()
-
-    async def async_step_usb_confirm(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Confirm a USB-discovered Elk-M1 serial connection."""
-        assert self._discovered_serial_port is not None
-        if user_input is not None:
-            return self.async_create_entry(
-                title=f"Elk-M1 Serial @ {self._discovered_serial_port}",
-                data={
-                    CONF_CONNECTION_TYPE: CONNECTION_SERIAL,
-                    CONF_SERIAL_PORT: self._discovered_serial_port,
-                    CONF_PREFIX: "elkm1",
-                    CONF_PIN: "",
-                },
-            )
-
-        return self.async_show_form(
-            step_id="usb_confirm",
-            description_placeholders={"port": self._discovered_serial_port},
-        )
-
-    @override
     def is_matching(self, other_flow: Self) -> bool:
-        """Return True if other_flow is matching this flow."""
+        """Return whether another discovery flow targets this host."""
         return other_flow.host == self.host
 
     async def async_step_discovery_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Confirm discovery."""
-        assert self._discovered_device is not None
-        self.context["title_placeholders"] = _placeholders_from_device(
-            self._discovered_device
-        )
-        return await self.async_step_discovered_connection()
-
-    @override
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Handle the initial step."""
+        """Confirm a discovered interface before verifying the panel."""
+        device = self._discovered_device
+        assert device is not None
+        self.context["title_placeholders"] = _placeholders_from_device(device)
         if user_input is not None:
-            if mac := user_input[CONF_DEVICE]:
-                if mac == "serial_port_flow":
-                    return await self.async_step_serial()
-                if mac == "manual_network_flow":
-                    return await self.async_step_manual_connection()
-                await self.async_set_unique_id(mac, raise_on_progress=False)
-                self._discovered_device = self._discovered_devices[mac]
-                return await self.async_step_discovered_connection()
-            return await self.async_step_manual_connection()
-
-        current_unique_ids = self._async_current_ids(include_ignore=False)
-
-        discovered_devices = await async_discover_devices(self.hass)
-        self._discovered_devices = {
-            dr.format_mac(device["mac_address"]): device for device in discovered_devices
-        }
-
-        devices_name: dict[str | None, str] = {
-            mac: f"{_short_mac(device['mac_address'])} ({device['ip_address']})"
-            for mac, device in self._discovered_devices.items()
-            if mac not in current_unique_ids
-        }
-
-        # Inject UI options for Manual and Serial
-        devices_name["manual_network_flow"] = "Manual Network Entry"
-        devices_name["serial_port_flow"] = "USB / Serial Port Discovery"
-
+            return await self.async_step_discovered_connection()
         return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({vol.Required(CONF_DEVICE): vol.In(devices_name)}),
+            step_id="discovery_confirm",
+            description_placeholders=_placeholders_from_device(device),
         )
-
-    async def _async_create_or_error(
-        self, user_input: dict[str, Any], importing: bool
-    ) -> tuple[dict[str, str] | None, ConfigFlowResult | None]:
-        """Try to connect and create the entry or error."""
-        if self._url_already_configured(_make_url_from_data(user_input)):
-            return None, self.async_abort(reason="address_already_configured")
-
-        try:
-            info = await validate_input(user_input, self.unique_id)
-        except CannotConnect:
-            return {"base": "cannot_connect"}, None
-        except InvalidAuth:
-            return {CONF_PASSWORD: "invalid_auth"}, None
-        except Exception:
-            _LOGGER.exception("Unexpected error validating input")
-            return {"base": "unknown"}, None
-
-        data_payload = {
-            CONF_HOST: info[CONF_HOST],
-            CONF_USERNAME: user_input.get(CONF_USERNAME, ""),
-            CONF_PASSWORD: user_input.get(CONF_PASSWORD, ""),
-            CONF_AUTO_CONFIGURE: True,
-            CONF_PREFIX: info[CONF_PREFIX],
-        }
-
-        if "serial_port" in user_input:
-            data_payload["serial_port"] = user_input["serial_port"]
-
-        if importing:
-            return None, self.async_create_entry(title=info["title"], data=user_input)
-
-        return None, self.async_create_entry(title=info["title"], data=data_payload)
 
     async def async_step_discovered_connection(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle connecting the device when we have a discovery."""
-        errors: dict[str, str] | None = {}
+        """Verify a discovered panel using the chosen ELK network scheme."""
         device = self._discovered_device
         assert device is not None
-
+        errors: dict[str, str] = {}
         if user_input is not None:
-            user_input[CONF_ADDRESS] = _address_from_discovery(device)
-            if self._async_current_entries():
-                user_input[CONF_PREFIX] = _short_mac(device.get("mac_address", ""))
-            else:
-                user_input[CONF_PREFIX] = ""
-            errors, result = await self._async_create_or_error(user_input, False)
+            values = dict(user_input)
+            values[CONF_ADDRESS] = _address_from_discovery(device)
+            values[CONF_PREFIX] = (
+                _short_mac(device.mac_address) if self._async_current_entries() else ""
+            )
+            result = await self._async_prepare_network(values, device, errors)
             if result is not None:
                 return result
 
-        default_proto = PORT_PROTOCOL_MAP.get(device.get("port", NON_SECURE_PORT), DEFAULT_SECURE_PROTOCOL)
-
+        default_protocol = PORT_PROTOCOL_MAP.get(
+            device.port, DEFAULT_SECURE_PROTOCOL
+        )
         return self.async_show_form(
             step_id="discovered_connection",
             data_schema=vol.Schema(
                 {
-                    **BASE_SCHEMA,
-                    vol.Required(CONF_PROTOCOL, default=default_proto): vol.In(
-                        ALL_PROTOCOLS
-                    ),
+                    **BASE_NETWORK_SCHEMA,
+                    vol.Required(
+                        CONF_PROTOCOL, default=default_protocol
+                    ): vol.In(NETWORK_PROTOCOLS),
                 }
             ),
             errors=errors,
@@ -414,10 +349,10 @@ class Elkm1ConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_manual_connection(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle connecting the device when we need manual network entry."""
-        errors: dict[str, str] | None = {}
+        """Verify a manually entered network endpoint."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            errors, result = await self._async_create_or_error(user_input, False)
+            result = await self._async_prepare_network(user_input, None, errors)
             if result is not None:
                 return result
 
@@ -425,193 +360,202 @@ class Elkm1ConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="manual_connection",
             data_schema=vol.Schema(
                 {
-                    **BASE_SCHEMA,
+                    **BASE_NETWORK_SCHEMA,
                     vol.Required(CONF_ADDRESS): str,
                     vol.Optional(CONF_PREFIX, default=""): str,
                     vol.Required(
                         CONF_PROTOCOL, default=DEFAULT_SECURE_PROTOCOL
-                    ): vol.In(ALL_PROTOCOLS),
+                    ): vol.In(NETWORK_PROTOCOLS),
                 }
             ),
             errors=errors,
         )
 
-    @override
+    async def _async_prepare_network(
+        self,
+        user_input: dict[str, Any],
+        discovered_device: ElkSystem | None,
+        errors: dict[str, str],
+    ) -> ConfigFlowResult | None:
+        """Verify network transport and stage a canonical, identified entry."""
+        endpoint = _make_url_from_data(user_input)
+        if self._url_already_configured(endpoint):
+            return self.async_abort(reason="address_already_configured")
+
+        device = discovered_device
+        if device is None:
+            host = hostname_from_url(endpoint)
+            try:
+                device = await async_discover_device(self.hass, host)
+            except OSError as err:
+                _LOGGER.debug("Directed ELK discovery of %s failed: %s", host, err)
+
+        formatted_mac = dr.format_mac(device.mac_address) if device else None
+        if formatted_mac:
+            await self.async_set_unique_id(formatted_mac, raise_on_progress=False)
+            self._abort_if_unique_id_configured()
+
+        try:
+            info = await validate_input(user_input, formatted_mac)
+        except CannotConnect:
+            errors["base"] = "cannot_connect"
+            return None
+        except InvalidAuth:
+            errors[CONF_PASSWORD] = "invalid_auth"
+            return None
+        except Exception:
+            _LOGGER.exception("Unexpected error verifying ELK network connection")
+            errors["base"] = "unknown"
+            return None
+
+        self._pending_title = info["title"]
+        self._pending_data = {
+            CONF_CONNECTION_TYPE: CONNECTION_NETWORK,
+            CONF_HOST: info[CONF_HOST],
+            CONF_USERNAME: str(user_input.get(CONF_USERNAME, "")),
+            CONF_PASSWORD: str(user_input.get(CONF_PASSWORD, "")),
+            CONF_AUTO_CONFIGURE: True,
+            CONF_PREFIX: info[CONF_PREFIX],
+        }
+        if formatted_mac:
+            self._pending_data[CONF_MAC_ADDRESS] = formatted_mac
+        return await self.async_step_elkm1_options()
+
     async def async_step_serial(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 2a: Serial/USB configuration with PIN & Smart Probing."""
-        import serial.tools.list_ports
-        errors = {}
-
+        """Select one serial port, then probe only that port for an ELK panel."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            raw_port = user_input[CONF_SERIAL_PORT]
-
-            # Map dynamic ttyUSB to persistent by-id path
             port = await self.hass.async_add_executor_job(
-                get_persistent_port_path, raw_port
+                get_persistent_port_path, str(user_input[CONF_SERIAL_PORT])
             )
-
-            # Check if already configured using the persistent path
-            await self.async_set_unique_id(port)
-            self._abort_if_unique_id_configured()
-
-            # Verify device exists on this port ONLY upon user selection
-            if user_input.get(CONF_VERIFY_DEVICE, True):
-                try:
-                    # Generous enough to sweep all standard baud rates (up to
-                    # 5 rates x ~2s each) rather than cutting the probe off
-                    # partway through baud auto-detection.
-                    if not await probe_serial_port(port, timeout=12.0):
-                        errors["base"] = "cannot_connect"
-                except (TimeoutError, OSError, ValueError) as e:
-                    _LOGGER.debug("Error probing serial port %s: %s", port, e)
-                    errors["base"] = "cannot_connect"
-                except Exception as e:
-                    _LOGGER.debug("Unexpected error probing serial port %s: %s", port, e)
-                    errors["base"] = "cannot_connect"
-
-            if not errors:
-                # Normalize PIN: ignore if empty, None, 0, or "0"
+            try:
+                baud = await validate_serial_port(port)
+            except (TimeoutError, OSError, ValueError):
+                errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected error probing selected ELK serial port")
+                errors["base"] = "unknown"
+            else:
+                device_id = f"serial:{port}"
+                await self.async_set_unique_id(device_id, raise_on_progress=False)
+                self._abort_if_unique_id_configured()
                 raw_pin = user_input.get(CONF_PIN)
-                pin = str(raw_pin).strip() if raw_pin not in (None, "", 0, "0") else ""
-
-                return self.async_create_entry(
-                    title=f"Elk-M1 Serial @ {port}",
-                    data={
-                        CONF_CONNECTION_TYPE: CONNECTION_SERIAL,
-                        CONF_SERIAL_PORT: port,
-                        CONF_PREFIX: user_input.get(CONF_PREFIX, "elkm1"),
-                        CONF_PIN: pin,
-                    },
+                pin = (
+                    str(raw_pin).strip()
+                    if raw_pin not in (None, "", 0, "0")
+                    else ""
                 )
-
-        # 1. Map all active HA integration entries to device paths they consume
-        ha_configured_ports: dict[str, str] = {}
-        for entry in self.hass.config_entries.async_entries():
-            # Safely check all common integration keys for serial paths
-            for key in ("serial_port", "device", "port", "path"):
-                val = entry.data.get(key) or entry.options.get(key)
-                if isinstance(val, str) and val.startswith(("/dev/", "COM")):
-                    ha_configured_ports[val] = entry.domain
-                elif isinstance(val, dict) and isinstance(val.get("path"), str):
-                    ha_configured_ports[val["path"]] = entry.domain
-
-        # 2. Get list of ports from the OS
-        ports = await self.hass.async_add_executor_job(serial.tools.list_ports.comports)
-
-        # 3. Build UI list SAFELY (NO CONCURRENT PROBING)
-        port_options = []
-        for port_info in ports:
-            device_path = port_info.device
-
-            # Get the reboot-safe persistent path
-            persistent_path = await self.hass.async_add_executor_job(
-                get_persistent_port_path, device_path
-            )
-
-            # Skip this port entirely if another HA integration is already using it
-            if device_path in ha_configured_ports or persistent_path in ha_configured_ports:
-                continue
-
-            # Build a clean label for the UI
-            label = f"{persistent_path} - {port_info.description}" if port_info.description and port_info.description != "n/a" else persistent_path
-
-            port_options.append({
-                "value": persistent_path,
-                "label": label,
-            })
-
-        # Fallback if the system literally has 0 serial ports available
-        if not port_options:
-            port_options = [{"value": "", "label": "No available serial ports discovered"}]
-
-        # Serial configuration schema using flexible dynamic dropdown
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_SERIAL_PORT): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=port_options,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                        custom_value=True,
-                    )
-                ),
-                vol.Optional(CONF_PREFIX, default="elkm1"): str,
-                vol.Optional(CONF_PIN, default=""): str,
-                vol.Optional(CONF_VERIFY_DEVICE, default=True): bool,
-            }
-        )
+                self._pending_title = f"Elk-M1 Serial @ {port}"
+                self._pending_data = {
+                    CONF_CONNECTION_TYPE: CONNECTION_SERIAL,
+                    CONF_SERIAL_PORT: port,
+                    CONF_DEVICE_ID: device_id,
+                    CONF_BAUD_RATE: baud,
+                    CONF_PREFIX: str(user_input.get(CONF_PREFIX, "elkm1")),
+                    CONF_PIN: pin,
+                }
+                return await self.async_step_elkm1_options()
 
         return self.async_show_form(
             step_id="serial",
-            data_schema=data_schema,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_SERIAL_PORT): selector.SerialPortSelector(),
+                    vol.Optional(CONF_PREFIX, default="elkm1"): str,
+                    vol.Optional(CONF_PIN, default=""): str,
+                }
+            ),
             errors=errors,
-            description_placeholders={"discovered": str(len(ports))}
+        )
+
+    async def async_step_elkm1_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Collect operational options after panel verification."""
+        assert self._pending_data is not None
+        assert self._pending_title is not None
+        if user_input is not None:
+            return self.async_create_entry(
+                title=self._pending_title,
+                data=self._pending_data,
+                options={CONF_POLL_INTERVAL: user_input[CONF_POLL_INTERVAL]},
+            )
+        return self.async_show_form(
+            step_id="elkm1_options",
+            data_schema=_options_schema(DEFAULT_POLL_INTERVAL),
         )
 
     def _url_already_configured(self, url: str) -> bool:
-        """See if we already have a elkm1 matching user input configured."""
-        existing_hosts = {
-            hostname_from_url(entry.data.get(CONF_HOST, ""))
+        """Return whether another entry owns the same network hostname."""
+        host = hostname_from_url(url)
+        return any(
+            hostname_from_url(str(entry.data.get(CONF_HOST, ""))) == host
             for entry in self._async_current_entries()
-        }
-        return hostname_from_url(url) in existing_hosts
+        )
 
-    @override
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle reconfiguration of an existing entry."""
-        reconfigure_entry = self._get_reconfigure_entry()
-        if reconfigure_entry.data.get(
-            CONF_CONNECTION_TYPE
-        ) == CONNECTION_SERIAL or CONF_SERIAL_PORT in reconfigure_entry.data:
-            return await self.async_step_reconfigure_serial()
+        """Reconfigure an entry while enforcing stable panel identity."""
+        entry = self._get_reconfigure_entry()
+        if entry.data.get(CONF_CONNECTION_TYPE) == CONNECTION_SERIAL:
+            return await self.async_step_reconfigure_serial(user_input)
 
         errors: dict[str, str] = {}
-        current = reconfigure_entry.data
-
+        current = entry.data
         if user_input is not None:
+            endpoint = _make_url_from_data(user_input)
+            device: ElkSystem | None = None
+            formatted_mac: str | None
             try:
-                info = await validate_input(user_input, reconfigure_entry.unique_id)
+                device = await async_discover_device(
+                    self.hass, hostname_from_url(endpoint)
+                )
+                info = await validate_input(user_input, entry.unique_id)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors[CONF_PASSWORD] = "invalid_auth"
             except Exception:
-                _LOGGER.exception("Unexpected error validating input")
+                _LOGGER.exception("Unexpected error during ELK reconfiguration")
                 errors["base"] = "unknown"
             else:
-                return self.async_update_reload_and_abort(
-                    reconfigure_entry,
+                if device is not None:
+                    formatted_mac = dr.format_mac(device.mac_address)
+                    await self.async_set_unique_id(formatted_mac)
+                    self._abort_if_unique_id_mismatch()
+                else:
+                    await self.async_set_unique_id(entry.unique_id)
+                    formatted_mac = str(current.get(CONF_MAC_ADDRESS, "")) or None
+                return self.async_update_and_abort(
+                    entry,
+                    unique_id=self.unique_id,
                     data_updates={
+                        CONF_CONNECTION_TYPE: CONNECTION_NETWORK,
                         CONF_HOST: info[CONF_HOST],
-                        CONF_USERNAME: user_input.get(CONF_USERNAME, ""),
-                        CONF_PASSWORD: user_input.get(CONF_PASSWORD, ""),
+                        CONF_USERNAME: str(user_input.get(CONF_USERNAME, "")),
+                        CONF_PASSWORD: str(user_input.get(CONF_PASSWORD, "")),
+                        CONF_MAC_ADDRESS: formatted_mac,
                     },
                 )
 
-        current_host_url = current.get(CONF_HOST, "")
-        protocol = DEFAULT_SECURE_PROTOCOL
-        for proto_name, proto_prefix in PROTOCOL_MAP.items():
-            if proto_name != "serial" and current_host_url.startswith(proto_prefix):
-                protocol = proto_name
-                break
-
+        current_url = str(current.get(CONF_HOST, ""))
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        CONF_ADDRESS, default=hostname_from_url(current_host_url)
+                        CONF_ADDRESS, default=hostname_from_url(current_url)
                     ): str,
                     vol.Optional(
                         CONF_USERNAME, default=current.get(CONF_USERNAME, "")
                     ): str,
                     vol.Optional(CONF_PASSWORD, default=""): str,
-                    vol.Required(CONF_PROTOCOL, default=protocol): vol.In(
-                        [p for p in ALL_PROTOCOLS if p != "serial"]
-                    ),
+                    vol.Required(
+                        CONF_PROTOCOL, default=_protocol_from_url(current_url)
+                    ): vol.In(NETWORK_PROTOCOLS),
                 }
             ),
             errors=errors,
@@ -620,64 +564,54 @@ class Elkm1ConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure_serial(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle reconfiguration of an existing serial entry."""
-        import serial.tools.list_ports
-
-        reconfigure_entry = self._get_reconfigure_entry()
+        """Reconfigure a serial endpoint without accepting a different adapter."""
+        entry = self._get_reconfigure_entry()
+        current = entry.data
         errors: dict[str, str] = {}
-        current = reconfigure_entry.data
-
         if user_input is not None:
-            raw_port = user_input[CONF_SERIAL_PORT]
             port = await self.hass.async_add_executor_job(
-                get_persistent_port_path, raw_port
+                get_persistent_port_path, str(user_input[CONF_SERIAL_PORT])
             )
-            if not await probe_serial_port(port, timeout=12.0):
+            try:
+                baud = await validate_serial_port(
+                    port, current.get(CONF_BAUD_RATE)
+                )
+            except (TimeoutError, OSError, ValueError):
                 errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected error probing ELK serial port")
+                errors["base"] = "unknown"
             else:
+                device_id = f"serial:{port}"
+                await self.async_set_unique_id(device_id)
+                self._abort_if_unique_id_mismatch()
                 raw_pin = user_input.get(CONF_PIN)
                 pin = (
                     str(raw_pin).strip()
                     if raw_pin not in (None, "", 0, "0")
                     else ""
                 )
-                return self.async_update_reload_and_abort(
-                    reconfigure_entry,
+                return self.async_update_and_abort(
+                    entry,
+                    unique_id=device_id,
                     data_updates={
+                        CONF_CONNECTION_TYPE: CONNECTION_SERIAL,
                         CONF_SERIAL_PORT: port,
-                        CONF_PREFIX: user_input.get(CONF_PREFIX, "elkm1"),
+                        CONF_DEVICE_ID: device_id,
+                        CONF_BAUD_RATE: baud,
+                        CONF_PREFIX: str(user_input.get(CONF_PREFIX, "elkm1")),
                         CONF_PIN: pin,
                     },
                 )
-
-        ports = await self.hass.async_add_executor_job(
-            serial.tools.list_ports.comports
-        )
-        port_options = [
-            {
-                "value": p.device,
-                "label": f"{p.device} - {p.description}"
-                if p.description and p.description != "n/a"
-                else p.device,
-            }
-            for p in ports
-        ]
-        if not port_options:
-            port_options = [{"value": "", "label": "No available serial ports discovered"}]
 
         return self.async_show_form(
             step_id="reconfigure_serial",
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        CONF_SERIAL_PORT, default=current.get(CONF_SERIAL_PORT, "")
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=port_options,
-                            mode=selector.SelectSelectorMode.DROPDOWN,
-                            custom_value=True,
-                        )
-                    ),
+                        CONF_SERIAL_PORT,
+                        default=str(current.get(CONF_SERIAL_PORT, "")),
+                    ): selector.SerialPortSelector(),
                     vol.Optional(
                         CONF_PREFIX, default=current.get(CONF_PREFIX, "elkm1")
                     ): str,
@@ -687,48 +621,41 @@ class Elkm1ConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    @override
     async def async_step_reauth(
-        self, entry_data: dict[str, Any]
+        self, _entry_data: dict[str, Any]
     ) -> ConfigFlowResult:
-        """Handle reauth triggered by a login failure reported by the panel."""
+        """Start credential replacement after a rejected ELK login."""
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Confirm new credentials for an existing network connection."""
-        reauth_entry = self._get_reauth_entry()
-
-        if reauth_entry.data.get(
-            CONF_CONNECTION_TYPE
-        ) == CONNECTION_SERIAL or CONF_SERIAL_PORT in reauth_entry.data:
-            # Serial connections have no username/password handshake, so a
-            # login failure here indicates a different underlying problem
-            # (e.g. wrong port) - reauth's credential form doesn't apply.
+        """Verify and store replacement network credentials."""
+        entry = self._get_reauth_entry()
+        if entry.data.get(CONF_CONNECTION_TYPE) == CONNECTION_SERIAL:
             return self.async_abort(reason="reauth_unsupported")
 
         errors: dict[str, str] = {}
-
         if user_input is not None:
-            url = reauth_entry.data.get(CONF_HOST, "")
             try:
                 await validate_network_connection(
-                    url, user_input[CONF_USERNAME], user_input[CONF_PASSWORD]
+                    str(entry.data[CONF_HOST]),
+                    str(user_input[CONF_USERNAME]),
+                    str(user_input[CONF_PASSWORD]),
                 )
             except InvalidAuthError:
-                errors["base"] = "invalid_auth"
+                errors[CONF_PASSWORD] = "invalid_auth"
             except (ConnectionTimeoutError, OSError):
                 errors["base"] = "cannot_connect"
             except Exception:
-                _LOGGER.exception("Unexpected error during reauth")
+                _LOGGER.exception("Unexpected error during ELK reauthentication")
                 errors["base"] = "unknown"
             else:
-                return self.async_update_reload_and_abort(
-                    reauth_entry,
+                return self.async_update_and_abort(
+                    entry,
                     data_updates={
-                        CONF_USERNAME: user_input[CONF_USERNAME],
-                        CONF_PASSWORD: user_input[CONF_PASSWORD],
+                        CONF_USERNAME: str(user_input[CONF_USERNAME]),
+                        CONF_PASSWORD: str(user_input[CONF_PASSWORD]),
                     },
                 )
 
@@ -742,41 +669,45 @@ class Elkm1ConfigFlow(ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
             description_placeholders={
-                "host": hostname_from_url(reauth_entry.data.get(CONF_HOST, ""))
+                "host": hostname_from_url(str(entry.data.get(CONF_HOST, "")))
             },
         )
 
 
+def _options_schema(default: int) -> vol.Schema:
+    """Return the operational options schema."""
+    return vol.Schema(
+        {
+            vol.Optional(CONF_POLL_INTERVAL, default=default): vol.All(
+                vol.Coerce(int),
+                vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL),
+            )
+        }
+    )
+
+
 class ElkOptionsFlowHandler(OptionsFlow):
-    """Handle an options flow for Elk-M1 Control."""
+    """Handle operational ELK options after setup."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the poll-interval fallback option."""
+        """Update fallback polling options."""
         if user_input is not None:
             return self.async_create_entry(data=user_input)
-
-        current_poll_interval = self.config_entry.options.get(
-            CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
-        )
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_POLL_INTERVAL, default=current_poll_interval
-                    ): vol.All(
-                        vol.Coerce(int),
-                        vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL),
-                    )
-                }
+            data_schema=_options_schema(
+                self.config_entry.options.get(
+                    CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
+                )
             ),
         )
 
 
 class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
+    """The ELK transport did not produce a valid panel response."""
+
 
 class InvalidAuth(HomeAssistantError):
-    """Error to indicate there is invalid auth."""
+    """The M1XEP rejected the supplied credentials."""
