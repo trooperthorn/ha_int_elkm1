@@ -122,7 +122,7 @@ async def _async_get_security_summary(service: ServiceCall) -> ServiceResponse:
     return {
         "total_faulted": len(faulted_zones),
         "is_ready_to_arm": ready_to_arm,
-        "faulted_zone_numbers": faulted_zones,
+        "faulted_zone_numbers": faulted_zones,  # type: ignore[dict-item]
     }
 
 
