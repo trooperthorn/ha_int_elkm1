@@ -42,9 +42,10 @@ async def async_setup_entry(
     # so entities are added as each custom value individually becomes
     # configured (and named) rather than only in this one pass.
     def _time_of_day_entity(setting: Any) -> TimeEntity | None:
-        if setting.is_default_name() or _enum_value(
-            setting.value_format
-        ) != SettingFormat.TIME_OF_DAY.value:
+        if (
+            setting.is_default_name()
+            or _enum_value(setting.value_format) != SettingFormat.TIME_OF_DAY.value
+        ):
             return None
         return ElkTimeOfDay(coordinator, config_entry, setting.index)
 
@@ -90,4 +91,13 @@ class ElkTimeOfDay(ElkEntity, TimeEntity):
     async def async_set_value(self, value: dt_time) -> None:
         """Set the time-of-day value."""
         if obj := self._get_obj():
-            obj.set((value.hour, value.minute))
+            expected = (value.hour, value.minute)
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(expected),
+                "CR",
+                f"custom time {self._index + 1} update",
+                lambda payload: any(
+                    item.get("index") == self._index and item.get("value") == expected
+                    for item in payload.get("values", [])
+                ),
+            )

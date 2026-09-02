@@ -54,6 +54,7 @@ _DEVICE_CLASS_MAP: dict[int, BinarySensorDeviceClass] = {
 # protocol doesn't guarantee it (see _DEVICE_CLASS_MAP comment above).
 _OPENING_DEFINITIONS = {1, 2, 3}
 
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -81,9 +82,7 @@ async def async_setup_entry(
         )
 
     zones = coordinator.data.zones if coordinator.data else []
-    async_add_dynamic_entities(
-        config_entry, coordinator, async_add_entities, zones, _zone_entity
-    )
+    async_add_dynamic_entities(config_entry, coordinator, async_add_entities, zones, _zone_entity)
 
     entities: list[BinarySensorEntity] = []
     entities.extend(
@@ -215,6 +214,14 @@ class ElkTroubleBinarySensor(ElkEntity, BinarySensorEntity):
             return False
         return self.coordinator.data.troubles.get(self._trouble_name, False)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the zone/device number carried by detailed SS fields."""
+        if not self.coordinator.data:
+            return {}
+        detail = self.coordinator.data.trouble_details.get(self._trouble_name)
+        return {"zone_or_device_number": detail} if detail is not None else {}
+
 
 class ElkAreaOpeningsBinarySensor(ElkEntity, BinarySensorEntity):
     """Aggregate 'any door/window open' sensor for one area.
@@ -257,8 +264,7 @@ class ElkAreaOpeningsBinarySensor(ElkEntity, BinarySensorEntity):
             for zone in self.coordinator.data.zones
             if zone.configured
             and self._get_enum_value(getattr(zone, "area", -1)) == self._area_index
-            and self._get_enum_value(getattr(zone, "definition", 0))
-            in _OPENING_DEFINITIONS
+            and self._get_enum_value(getattr(zone, "definition", 0)) in _OPENING_DEFINITIONS
         ]
 
     @property

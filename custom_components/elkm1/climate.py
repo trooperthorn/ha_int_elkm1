@@ -146,11 +146,7 @@ class ElkThermostat(ElkEntity, ClimateEntity):
         obj = self._get_obj()
         if not obj or self.hvac_mode not in (HVACMode.HEAT, HVACMode.COOL):
             return None
-        value = (
-            obj.heat_setpoint
-            if self.hvac_mode == HVACMode.HEAT
-            else obj.cool_setpoint
-        )
+        value = obj.heat_setpoint if self.hvac_mode == HVACMode.HEAT else obj.cool_setpoint
         return float(value)
 
     @property
@@ -173,13 +169,23 @@ class ElkThermostat(ElkEntity, ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
         if obj := self._get_obj():
-            obj.set(ThermostatSetting.MODE, _HVAC_MODE_TO_ELK[hvac_mode])
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(ThermostatSetting.MODE, _HVAC_MODE_TO_ELK[hvac_mode]),
+                "TR",
+                f"thermostat {self._index + 1} mode change",
+                lambda payload: payload.get("thermostat_index") == self._index,
+            )
 
     @override
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Set new fan mode."""
         if obj := self._get_obj():
-            obj.set(ThermostatSetting.FAN, _FAN_TO_ELK[fan_mode])
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(ThermostatSetting.FAN, _FAN_TO_ELK[fan_mode]),
+                "TR",
+                f"thermostat {self._index + 1} fan change",
+                lambda payload: payload.get("thermostat_index") == self._index,
+            )
 
     @override
     async def async_set_temperature(self, **kwargs: Any) -> None:
@@ -193,9 +199,24 @@ class ElkThermostat(ElkEntity, ClimateEntity):
                 if self.hvac_mode == HVACMode.HEAT
                 else ThermostatSetting.COOL_SETPOINT
             )
-            obj.set(setting, int(temp))
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(setting, int(temp)),
+                "TR",
+                f"thermostat {self._index + 1} setpoint change",
+                lambda payload: payload.get("thermostat_index") == self._index,
+            )
             return
         if (low := kwargs.get("target_temp_low")) is not None:
-            obj.set(ThermostatSetting.HEAT_SETPOINT, int(low))
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(ThermostatSetting.HEAT_SETPOINT, int(low)),
+                "TR",
+                f"thermostat {self._index + 1} heat setpoint change",
+                lambda payload: payload.get("thermostat_index") == self._index,
+            )
         if (high := kwargs.get("target_temp_high")) is not None:
-            obj.set(ThermostatSetting.COOL_SETPOINT, int(high))
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(ThermostatSetting.COOL_SETPOINT, int(high)),
+                "TR",
+                f"thermostat {self._index + 1} cool setpoint change",
+                lambda payload: payload.get("thermostat_index") == self._index,
+            )

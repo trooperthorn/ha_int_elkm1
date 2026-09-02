@@ -19,7 +19,7 @@ _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 1
 
-# Elk light levels are 0-100; HA brightness is 0-255.
+# In PC/PS, 0=off, 1=full on, and 2-99 are dim percentages.
 _ELK_MAX_LEVEL = 100
 _HA_MAX_BRIGHTNESS = 255
 
@@ -53,6 +53,7 @@ class ElkPlcLight(ElkEntity, LightEntity):
     """Representation of an Elk-M1 PLC lighting device."""
 
     _attr_color_mode = ColorMode.BRIGHTNESS
+
     def __init__(
         self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int
     ) -> None:
@@ -86,7 +87,12 @@ class ElkPlcLight(ElkEntity, LightEntity):
         obj = self._get_obj()
         if not obj:
             return None
-        return round(int(obj.status) * _HA_MAX_BRIGHTNESS / _ELK_MAX_LEVEL)
+        status = int(obj.status)
+        if status <= 0:
+            return 0
+        if status == 1:
+            return _HA_MAX_BRIGHTNESS
+        return round(min(status, 99) * _HA_MAX_BRIGHTNESS / _ELK_MAX_LEVEL)
 
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -96,12 +102,16 @@ class ElkPlcLight(ElkEntity, LightEntity):
             return
         if (brightness := kwargs.get("brightness")) is not None:
             level = round(brightness * _ELK_MAX_LEVEL / _HA_MAX_BRIGHTNESS)
-            obj.level(max(level, 1))
+            await self.coordinator.async_queue_command(
+                lambda: obj.level(max(level, 2)), "lighting level change"
+            )
         else:
-            obj.level(_ELK_MAX_LEVEL)
+            await self.coordinator.async_queue_command(
+                lambda: obj.level(_ELK_MAX_LEVEL), "lighting on"
+            )
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off."""
         if obj := self._get_obj():
-            obj.level(0)
+            await self.coordinator.async_queue_command(lambda: obj.level(0), "lighting off")

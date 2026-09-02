@@ -2,6 +2,7 @@
 set_time, display_message, get_security_summary), routed to a coordinator
 by prefix.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -10,7 +11,7 @@ import pytest
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.elkm1.const import DOMAIN
-from custom_components.elkm1.models import ElkPanelData, ElkRuntimeData
+from custom_components.elkm1.models import AreaData, ElkPanelData, ElkRuntimeData
 from custom_components.elkm1.services import async_setup_services
 
 
@@ -23,7 +24,7 @@ async def registered_coordinator(hass, mock_network_entry):
     coordinator.speak_phrase = AsyncMock()
     coordinator.set_panel_time = AsyncMock()
     coordinator.display_message = AsyncMock()
-    coordinator.data = ElkPanelData(zones_faulted=[0, 3])
+    coordinator.data = ElkPanelData(zones_faulted=[0, 3], areas={0: AreaData(arm_up_state=0)})
 
     mock_network_entry.runtime_data = ElkRuntimeData(
         prefix="",
@@ -38,16 +39,12 @@ async def registered_coordinator(hass, mock_network_entry):
 
 
 async def test_speak_word_routes_to_coordinator(hass, registered_coordinator):
-    await hass.services.async_call(
-        DOMAIN, "speak_word", {"number": 42}, blocking=True
-    )
+    await hass.services.async_call(DOMAIN, "speak_word", {"number": 42}, blocking=True)
     registered_coordinator.speak_word.assert_called_once_with(42)
 
 
 async def test_speak_phrase_routes_to_coordinator(hass, registered_coordinator):
-    await hass.services.async_call(
-        DOMAIN, "speak_phrase", {"number": 99}, blocking=True
-    )
+    await hass.services.async_call(DOMAIN, "speak_phrase", {"number": 99}, blocking=True)
     registered_coordinator.speak_phrase.assert_called_once_with(99)
 
 

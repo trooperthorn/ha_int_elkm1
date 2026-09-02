@@ -115,13 +115,13 @@ pass, then keeps listening (`coordinator.async_add_listener`, woken by the coord
 individually become configured.
 
 **Enum/string/int casting.** `elkm1_lib` fields like `logical_status`/`definition`/
-`alarm_state` are typed enums, but code that reads them needs a raw int to compare
-against protocol values - `bool(SomeEnum.MEMBER)` is always `True` regardless of the
-member's value, so truthiness checks on the enum itself are a bug magnet. Every
-platform has its own small `_get_enum_value()`/`_enum_value()` helper
-(`obj.value if hasattr(obj, "value") else obj`, coerced to `int`) for this; there's no
-shared one because the platforms predate a shared `helpers/` module for it, not because
-the duplication is intentional.
+`armed_status` and `arm_up_state` are typed numeric enums. `alarm_state` must retain its
+exact single-character wire value because valid values include `:` through `B`; code must
+not coerce it to an integer. Numeric enum readers compare against protocol values -
+`bool(SomeEnum.MEMBER)` is always `True` regardless of the member's value, so truthiness
+checks on the enum itself are a bug magnet. New protocol-facing code uses
+`protocol.numeric_value()` or `protocol.protocol_value()`; a few older platforms retain
+small local numeric helpers until their entity-specific code is consolidated.
 
 **`ZoneLogicalStatus` only has 4 members**: `0=NORMAL, 1=TROUBLE, 2=VIOLATED,
 3=BYPASSED`. There's no separate "violated-and-bypassed" value - bypass is its own

@@ -2,6 +2,7 @@
 switch's idempotent toggle-mapping (the protocol's `zb` bypass command is a
 raw toggle, so turn_on/turn_off have to check current state before sending).
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -18,6 +19,12 @@ def _output_switch(index: int, output_obj) -> ElkOutput:
     switch._index = index
     coordinator = MagicMock()
     coordinator.data = ElkPanelData(outputs=[output_obj])
+
+    async def _queue(sender, _description):
+        sender()
+        return True
+
+    coordinator.async_queue_command = AsyncMock(side_effect=_queue)
     switch.coordinator = coordinator
     return switch
 
@@ -103,4 +110,3 @@ async def test_bypass_switch_turn_off_is_a_noop_when_not_bypassed():
     await switch.async_turn_off()
 
     switch.coordinator.bypass_zone.assert_not_called()
-

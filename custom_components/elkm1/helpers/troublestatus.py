@@ -40,6 +40,15 @@ TROUBLE_INDEX_NAMES: dict[int, tuple[str, str]] = {
     33: ("fire", "Fire"),
 }
 
+# These positions encode a one-based zone/device number as ASCII value minus
+# ASCII '0', rather than a Boolean flag (protocol v1.90, sections 4.29.2-4.30).
+TROUBLE_DETAIL_INDICES = frozenset((1, 5, 18, 20, 33))
+
+
+def normalize_trouble_status(raw_status: str) -> str:
+    """Return the 34 status bytes, excluding elkm1-lib's reserved ``00``."""
+    return raw_status[:34]
+
 
 def parse_troubles(raw_status: str) -> dict[str, bool]:
     """Parse a raw SS status string into {machine_name: is_active}.
@@ -49,18 +58,27 @@ def parse_troubles(raw_status: str) -> dict[str, bool]:
     other character when active (some positions encode a zone number
     instead of a plain flag; this only reports on/off, not which zone).
     """
+    raw_status = normalize_trouble_status(raw_status)
     return {
         name: index < len(raw_status) and raw_status[index] != "0"
         for index, (name, _label) in TROUBLE_INDEX_NAMES.items()
     }
 
 
+def parse_trouble_details(raw_status: str) -> dict[str, int]:
+    """Return zone/device numbers carried by active detailed trouble fields."""
+    raw_status = normalize_trouble_status(raw_status)
+    details: dict[str, int] = {}
+    for index in TROUBLE_DETAIL_INDICES:
+        if index >= len(raw_status) or raw_status[index] == "0":
+            continue
+        name = TROUBLE_INDEX_NAMES[index][0]
+        details[name] = ord(raw_status[index]) - ord("0")
+    return details
+
+
 def format_troubles(raw_status: str) -> str:
     """Return a human-readable, comma-separated list of active troubles."""
     active = parse_troubles(raw_status)
-    labels = [
-        label
-        for index, (name, label) in TROUBLE_INDEX_NAMES.items()
-        if active.get(name)
-    ]
+    labels = [label for index, (name, label) in TROUBLE_INDEX_NAMES.items() if active.get(name)]
     return ", ".join(labels) if labels else "Normal"

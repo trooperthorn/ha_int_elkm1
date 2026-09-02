@@ -71,10 +71,10 @@ without deleting and re-adding the integration.
 
 Platform | What
 ---|---
-`alarm_control_panel` | One entity per configured area (1-8), with arm-away/home/night/vacation/custom-bypass, disarm, and panic-trigger.
+`alarm_control_panel` | One entity per configured area (1-8), with arm-away/home/night/vacation/custom-bypass and disarm. Panic trigger is intentionally unavailable because ELK protocol v1.90 defines no third-party panic command.
 `binary_sensor` | One entity per configured zone (door/window/motion/smoke/CO/freeze/gas/heat/water, mapped from the panel's zone-definition field), one per system trouble condition (disabled by default), and one aggregate "any door/window open" sensor per area.
 `sensor` | Panel status/trouble summary, an active-zones count, and per-zone temperature/voltage sensors for zones defined as such.
-`switch` | Physical outputs, thermostat emergency-heat, zone bypass (as a toggle), and a proxy switch for pre-arm automation blueprints.
+`switch` | Physical outputs 1-208 (65-208 disabled by default), thermostat emergency-heat, zone bypass (as a toggle), and a proxy switch for pre-arm automation blueprints.
 `climate` | Elk-connected thermostats, if the panel has any.
 `light` | PLC/X10 lighting outputs.
 `number` | RAM counters and EEPROM custom values that have a panel-assigned name.

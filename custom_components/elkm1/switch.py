@@ -70,8 +70,15 @@ async def async_setup_entry(
         config_entry,
         coordinator,
         async_add_entities,
-        outputs,
+        outputs[:64],
         lambda output: ElkOutput(coordinator, config_entry, output.index),
+    )
+    # The M1 reports/controls outputs 65-208 but deliberately has no text
+    # descriptions for them. Expose those wire-level outputs disabled by
+    # default so advanced installations can opt in without creating 144
+    # enabled, generically named entities for every panel.
+    async_add_entities(
+        [ElkOutput(coordinator, config_entry, output.index) for output in outputs[64:]]
     )
 
     # 3. Thermostat Emergency Heat Switches
@@ -150,11 +157,15 @@ class ElkArmRequestSwitch(ElkEntity, SwitchEntity):
 class ElkOutput(ElkEntity, SwitchEntity):
     """Elk output as switch."""
 
-    def __init__(self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int) -> None:
+    def __init__(
+        self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int
+    ) -> None:
         """Initialize the Elk physical output."""
-        super().__init__(coordinator, config_entry, f"output_{index+1}")
+        super().__init__(coordinator, config_entry, f"output_{index + 1}")
         self._index = index
-        self._attr_unique_id = f"{config_entry.entry_id}_output_{index+1}"
+        self._attr_unique_id = f"{config_entry.entry_id}_output_{index + 1}"
+        if index >= 64:
+            self._attr_entity_registry_enabled_default = False
 
     @property
     @override
@@ -179,28 +190,37 @@ class ElkOutput(ElkEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the output indefinitely."""
         if obj := self._get_obj():
-            obj.turn_on(0)
+            await self.coordinator.async_queue_command(
+                lambda: obj.turn_on(0), f"output {self._index + 1} on"
+            )
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the output."""
         if obj := self._get_obj():
-            obj.turn_off()
+            await self.coordinator.async_queue_command(
+                obj.turn_off, f"output {self._index + 1} off"
+            )
 
     async def async_switch_output_turn_on_for(self, duration: timedelta) -> None:
         """Turn on an output for specified length of time."""
         if obj := self._get_obj():
-            obj.turn_on(ceil(duration.total_seconds()))
+            await self.coordinator.async_queue_command(
+                lambda: obj.turn_on(ceil(duration.total_seconds())),
+                f"output {self._index + 1} timed on",
+            )
 
 
 class ElkThermostatEMHeat(ElkEntity, SwitchEntity):
     """Elk Thermostat emergency heat as switch."""
 
-    def __init__(self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int) -> None:
+    def __init__(
+        self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int
+    ) -> None:
         """Initialize the emergency heat switch."""
-        super().__init__(coordinator, config_entry, f"thermostat_{index+1}_emheat")
+        super().__init__(coordinator, config_entry, f"thermostat_{index + 1}_emheat")
         self._index = index
-        self._attr_unique_id = f"{config_entry.entry_id}_thermostat_{index+1}_emheat"
+        self._attr_unique_id = f"{config_entry.entry_id}_thermostat_{index + 1}_emheat"
 
     def _get_obj(self) -> Any:
         if self.coordinator.data and self._index < len(self.coordinator.data.thermostats):
@@ -234,13 +254,23 @@ class ElkThermostatEMHeat(ElkEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on Emergency Heat."""
         if obj := self._get_obj():
-            obj.set(ThermostatSetting.MODE, ThermostatMode.EMERGENCY_HEAT)
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(ThermostatSetting.MODE, ThermostatMode.EMERGENCY_HEAT),
+                "TR",
+                f"thermostat {self._index + 1} emergency heat on",
+                lambda payload: payload.get("thermostat_index") == self._index,
+            )
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off Emergency Heat by reverting to Auto."""
         if obj := self._get_obj():
-            obj.set(ThermostatSetting.MODE, ThermostatMode.AUTO)
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(ThermostatSetting.MODE, ThermostatMode.AUTO),
+                "TR",
+                f"thermostat {self._index + 1} emergency heat off",
+                lambda payload: payload.get("thermostat_index") == self._index,
+            )
 
     async def async_switch_output_turn_on_for(self, duration: timedelta) -> None:
         """Not supported for thermostat."""

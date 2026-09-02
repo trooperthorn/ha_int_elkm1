@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026.09.02.1]
+
+Safety hardening against the manufacturer-published ELK-M1 RS-232 ASCII Protocol v1.90.
+
+### Security and alarm-state corrections
+
+- Disabled Home Assistant panic triggering: lowercase `ap` is not a protocol command and
+  uppercase `AP` is explicitly reserved for M1-to-M1XEP use, not third parties.
+- Preserved all `AS` alarm-state wire symbols (`0`-`9`, `:`-`B`) without integer coercion;
+  full alarm, abort delay, fire, panic category, force-arm, and exit states now follow the
+  published state tables.
+- Split area bypass (`zb999`) from clear-all bypass (`zb000`) and require the corresponding
+  checksum-valid `ZB` response.
+- Interpreted both `EE` timers using the message's Entrance/Exit type and populated the
+  reported entry/exit seconds.
+- Derived fire, AC-power, and control-battery health from `AS`/`AZ`/`SS` rather than
+  hard-coded or off-by-one zone definitions. Unknown trouble state is no longer reported
+  healthy, and zone/device numbers embedded in `SS` are preserved.
+
+### Transport and protocol corrections
+
+- Accepted CR/LF, CR-only, and LF-only frames; correlated responses only after complete
+  length/checksum validation; bounded unterminated input.
+- Baud probing now includes 14400 and all Global G34 legacy rates, removes undocumented
+  57600, and ignores unrelated valid asynchronous traffic until `VN` or timeout.
+- Added the documented `CR`, `RR`, and `TR` completion metadata omitted by
+  `elkm1-lib 2.2.15`; disconnected and ELKRP-paused writes now fail explicitly instead of
+  being silently discarded.
+- Added bounded AS/AZ/CS/SS/LW refresh requests in place of merely rebuilding stale cached
+  state. Periodic `ZS` remains intentionally excluded per the protocol.
+- Decoded unit `00` all-lights broadcasts and the complete `KC` function-key LED,
+  bypass-code, and beep/chime payload.
+- Corrected PLC state `1` to mean full-on and exposed unnamed outputs 65-208 disabled by
+  default, matching the panel's wire capability and text-description limit.
+
+### Validation
+
+- Added manufacturer-derived alarm-state, timer, bypass, trouble, lighting, framing,
+  checksum, asynchronous-probe, response-correlation, and supplemental-payload tests.
+
 ## [2026.08.20]
 
 A complete rework aimed at genuinely exceeding Home Assistant's Platinum quality

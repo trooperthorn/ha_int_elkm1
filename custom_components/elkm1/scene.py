@@ -78,4 +78,6 @@ class ElkTask(ElkEntity, Scene):
     async def async_activate(self, **kwargs: Any) -> None:
         """Activate the task."""
         if obj := self._get_obj():
-            obj.activate()
+            await self.coordinator.async_queue_command(
+                obj.activate, f"task {self._index + 1} activation"
+            )

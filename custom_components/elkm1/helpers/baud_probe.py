@@ -1,12 +1,12 @@
 """Host-side baud-rate auto-detection for Elk-M1 serial connections.
 
-The Elk-M1 RS232 ASCII protocol (manual v1.88, section 2) has no command to
+The Elk-M1 RS232 ASCII protocol (manual v1.90, section 2) has no command to
 query or set the panel's own serial baud rate: it is a fixed panel-side
-Global Programming setting between 9600 and 115200 baud, with no wire-level
-handshake and no RTS/CTS flow control honored by the panel. "Auto-detect"
-therefore means trying each standard rate on the host side and confirming it
-against a real reply to the `vn` (version request) command, not any
-protocol-level negotiation with the panel.
+Global Programming setting with no wire-level handshake and no RTS/CTS flow
+control honored by the panel. "Auto-detect" therefore means trying each
+manufacturer-documented rate on the host side and confirming it against a
+real reply to the `vn` (version request) command, not any protocol-level
+negotiation with the panel.
 
 Message construction/validation reuses elkm1_lib.message's vn_encode()/
 decode() so the checksum and framing logic used here stays identical to
@@ -22,16 +22,30 @@ import logging
 import serial_asyncio_fast
 from elkm1_lib.message import decode, vn_encode
 
+from .framing import MAX_FRAME_CHARS, extract_frames
+
 _LOGGER = logging.getLogger(__name__)
 
-# Fastest first: panels shipped/reconfigured in the last decade commonly
-# default to 115200; older or manually-reconfigured panels may run slower.
-STANDARD_BAUD_RATES: tuple[int, ...] = (115200, 57600, 38400, 19200, 9600)
+# Installation manual Global G34 values, fastest first. The current protocol
+# guide describes 9600-115200; legacy rates remain last for older panels.
+STANDARD_BAUD_RATES: tuple[int, ...] = (
+    115200,
+    38400,
+    19200,
+    14400,
+    9600,
+    4800,
+    2400,
+    1200,
+    300,
+)
 
 # The protocol manual notes multi-second command latency is normal for some
 # commands; vn is lightweight, but a generous margin avoids false negatives
 # on a slow/busy panel.
 PROBE_RESPONSE_TIMEOUT = 2.0
+_DECODE_ERRORS = (ValueError, AttributeError)
+_PROBE_ERRORS = (TimeoutError, asyncio.IncompleteReadError, OSError, ValueError)
 
 
 class BaudProbeError(Exception):
@@ -63,23 +77,35 @@ async def _try_baud(
     reader: asyncio.StreamReader | None = None
     writer: asyncio.StreamWriter | None = None
     try:
-        reader, writer = await serial_asyncio_fast.open_serial_connection(
-            url=port, baudrate=baud
-        )
+        reader, writer = await serial_asyncio_fast.open_serial_connection(url=port, baudrate=baud)
         writer.write(_build_vn_command())
         await writer.drain()
-        line = await asyncio.wait_for(
-            reader.readuntil(b"\r\n"), timeout=PROBE_RESPONSE_TIMEOUT
-        )
-        decoded_line = line.decode("ISO-8859-1").strip()
-        result = decode(decoded_line)
-    except (TimeoutError, asyncio.IncompleteReadError, OSError, ValueError):
+        read_buffer = ""
+        async with asyncio.timeout(PROBE_RESPONSE_TIMEOUT):
+            while True:
+                data = await reader.read(500)
+                if not data:
+                    break
+                read_buffer += data.decode("ISO-8859-1")
+                frames, read_buffer = extract_frames(read_buffer)
+                if len(read_buffer) > MAX_FRAME_CHARS:
+                    break
+                for frame in frames:
+                    if len(frame) > MAX_FRAME_CHARS:
+                        continue
+                    try:
+                        result = decode(frame)
+                    except _DECODE_ERRORS:
+                        continue
+                    # ELK traffic is asynchronous. Ignore valid broadcasts and
+                    # continue until the specifically requested VN arrives.
+                    if result and result[0] == "VN":
+                        return reader, writer
+    except _PROBE_ERRORS:
         if writer is not None:
             writer.close()
         return None
 
-    if result and result[0] == "VN":
-        return reader, writer
     writer.close()
     return None
 

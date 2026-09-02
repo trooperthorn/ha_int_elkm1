@@ -83,18 +83,14 @@ async def async_setup_entry(
         return None
 
     zones = coordinator.data.zones if coordinator.data else []
-    async_add_dynamic_entities(
-        config_entry, coordinator, async_add_entities, zones, _zone_entity
-    )
+    async_add_dynamic_entities(config_entry, coordinator, async_add_entities, zones, _zone_entity)
 
     # Register entity services
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
         SERVICE_SENSOR_ZONE_BYPASS, ELK_USER_CODE_SERVICE_SCHEMA, "async_zone_bypass"
     )
-    platform.async_register_entity_service(
-        SERVICE_SENSOR_ZONE_TRIGGER, None, "async_zone_trigger"
-    )
+    platform.async_register_entity_service(SERVICE_SENSOR_ZONE_TRIGGER, None, "async_zone_trigger")
 
 
 class ElkSensor(ElkEntity, SensorEntity):
@@ -171,10 +167,12 @@ class ElkPanel(ElkSensor):
 class ElkZone(ElkSensor):
     """Representation of an Elk-M1 Zone (Analog or Temperature)."""
 
-    def __init__(self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int) -> None:
-        super().__init__(coordinator, config_entry, f"sensor_zone_{index+1}")
+    def __init__(
+        self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int
+    ) -> None:
+        super().__init__(coordinator, config_entry, f"sensor_zone_{index + 1}")
         self._index = index
-        self._attr_unique_id = f"{config_entry.entry_id}_sensor_zone_{index+1}"
+        self._attr_unique_id = f"{config_entry.entry_id}_sensor_zone_{index + 1}"
         self._temperature_unit = "°F"
 
     @property
@@ -250,6 +248,5 @@ class ElkZone(ElkSensor):
         await self.coordinator.bypass_zone(self._index + 1, code)
 
     async def async_zone_trigger(self) -> None:
-        """Trigger zone via elkm1_lib's own Zone.trigger() helper."""
-        if obj := self._get_obj():
-            obj.trigger()
+        """Trigger a zone, explicitly treated as protocol-unconfirmed."""
+        await self.coordinator.trigger_zone(self._index + 1)

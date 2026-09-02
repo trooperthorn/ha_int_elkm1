@@ -133,17 +133,37 @@ class ElkCounter(ElkEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Set the counter value."""
         if obj := self._get_obj():
-            obj.set(int(value))
+            expected = int(value)
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(expected),
+                "CV",
+                f"counter {self._index + 1} update",
+                lambda payload: (
+                    payload.get("counter") == self._index and payload.get("value") == expected
+                ),
+            )
 
     async def async_counter_refresh(self) -> None:
         """Request the panel resend this counter's current value."""
         if obj := self._get_obj():
-            obj.get()
+            await self.coordinator.async_confirm_command(
+                obj.get,
+                "CV",
+                f"counter {self._index + 1} refresh",
+                lambda payload: payload.get("counter") == self._index,
+            )
 
     async def async_counter_set(self, value: int) -> None:
         """Set the counter value via the elkm1.sensor_counter_set service."""
         if obj := self._get_obj():
-            obj.set(value)
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(value),
+                "CV",
+                f"counter {self._index + 1} update",
+                lambda payload: (
+                    payload.get("counter") == self._index and payload.get("value") == value
+                ),
+            )
 
 
 class ElkCustomValue(ElkEntity, NumberEntity):
@@ -186,7 +206,16 @@ class ElkCustomValue(ElkEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Set the custom value."""
         if obj := self._get_obj():
-            obj.set(int(value))
+            expected = int(value)
+            await self.coordinator.async_confirm_command(
+                lambda: obj.set(expected),
+                "CR",
+                f"custom value {self._index + 1} update",
+                lambda payload: any(
+                    item.get("index") == self._index and item.get("value") == expected
+                    for item in payload.get("values", [])
+                ),
+            )
 
     async def async_counter_refresh(self) -> None:
         """Not supported for custom values."""

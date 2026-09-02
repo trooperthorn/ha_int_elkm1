@@ -2,9 +2,10 @@
 and that ElkCustomValue correctly rejects them (those services only make
 sense for counters).
 """
+
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
@@ -18,6 +19,12 @@ def _counter(index: int, counter_obj) -> ElkCounter:
     entity._index = index
     coordinator = MagicMock()
     coordinator.data = ElkPanelData(counters=[counter_obj])
+
+    async def _confirm(sender, *_args, **_kwargs):
+        sender()
+        return True
+
+    coordinator.async_confirm_command = AsyncMock(side_effect=_confirm)
     entity.coordinator = coordinator
     return entity
 

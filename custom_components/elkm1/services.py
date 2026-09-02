@@ -48,7 +48,10 @@ SECURITY_SUMMARY_SCHEMA = vol.Schema(
     }
 )
 
-def _find_coordinator_by_prefix(hass: HomeAssistant, prefix: str) -> ElkDataUpdateCoordinator | None:
+
+def _find_coordinator_by_prefix(
+    hass: HomeAssistant, prefix: str
+) -> ElkDataUpdateCoordinator | None:
     """Search all config entries for a given prefix's coordinator."""
     for entry in hass.config_entries.async_entries(DOMAIN):
         if not entry.runtime_data:
@@ -58,6 +61,7 @@ def _find_coordinator_by_prefix(hass: HomeAssistant, prefix: str) -> ElkDataUpda
             return elk_data.coordinator
     return None
 
+
 def _get_coordinator(service: ServiceCall) -> ElkDataUpdateCoordinator:
     """Get the coordinator from a service call."""
     prefix = service.data.get("prefix", "")
@@ -66,11 +70,13 @@ def _get_coordinator(service: ServiceCall) -> ElkDataUpdateCoordinator:
         raise HomeAssistantError(f"No ElkM1 coordinator with prefix '{prefix}' found")
     return coordinator
 
+
 async def _async_speak_word_service(service: ServiceCall) -> None:
     """Speak a word via elkm1_lib's own Panel.speak_word() helper."""
     coordinator = _get_coordinator(service)
     number = service.data["number"]
     await coordinator.speak_word(number)
+
 
 async def _async_speak_phrase_service(service: ServiceCall) -> None:
     """Speak a phrase via elkm1_lib's own Panel.speak_phrase() helper."""
@@ -78,10 +84,12 @@ async def _async_speak_phrase_service(service: ServiceCall) -> None:
     number = service.data["number"]
     await coordinator.speak_phrase(number)
 
+
 async def _async_set_time_service(service: ServiceCall) -> None:
     """Write the panel's real-time clock via elkm1_lib's own Panel.set_time() helper."""
     coordinator = _get_coordinator(service)
     await coordinator.set_panel_time(dt_util.now())
+
 
 async def _async_display_message_service(service: ServiceCall) -> None:
     """Display a message on an area's keypads via elkm1_lib's own Area.display_message()."""
@@ -95,6 +103,7 @@ async def _async_display_message_service(service: ServiceCall) -> None:
         timeout=service.data["timeout"],
     )
 
+
 async def _async_get_security_summary(service: ServiceCall) -> ServiceResponse:
     """Return live security data to an automation or script."""
     coordinator = _get_coordinator(service)
@@ -105,11 +114,17 @@ async def _async_get_security_summary(service: ServiceCall) -> ServiceResponse:
     # Elk zones are 1-indexed for the user, indices are 0-indexed
     faulted_zones = [idx + 1 for idx in faulted_indices]
 
+    areas = coordinator.data.areas.values() if coordinator.data else []
+    # AS Arm Up State is authoritative. State 1 is ready and state 2 can be
+    # force armed; callers can still inspect the faulted-zone list separately.
+    ready_to_arm = bool(coordinator.data) and all(area.arm_up_state in (1, 2) for area in areas)
+
     return {
         "total_faulted": len(faulted_zones),
-        "is_ready_to_arm": len(faulted_zones) == 0,
-        "faulted_zone_numbers": faulted_zones,  # type: ignore[dict-item]
+        "is_ready_to_arm": ready_to_arm,
+        "faulted_zone_numbers": faulted_zones,
     }
+
 
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Create ElkM1 services."""
@@ -133,5 +148,5 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         "get_security_summary",
         _async_get_security_summary,
         SECURITY_SUMMARY_SCHEMA,
-        supports_response=SupportsResponse.ONLY
+        supports_response=SupportsResponse.ONLY,
     )

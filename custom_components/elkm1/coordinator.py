@@ -10,9 +10,9 @@ from typing import Any, cast
 
 from elkm1_lib import Elk
 from elkm1_lib.const import ArmLevel
-from elkm1_lib.message import MessageEncode
+from elkm1_lib.message import as_encode, az_encode, cs_encode, lw_encode, ss_encode
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
@@ -37,17 +37,30 @@ from .const import (
     EVENT_ELKM1_KEYPAD_KEY_PRESSED,
 )
 from .helpers.transport import ElkConnectionManager
-from .helpers.troublestatus import parse_troubles
+from .helpers.troublestatus import (
+    normalize_trouble_status,
+    parse_trouble_details,
+    parse_troubles,
+)
 from .models import AreaData, ElkPanelData
+from .protocol import (
+    FIRE_ZONE_DEFINITIONS,
+    alarm_is_fire,
+    alarm_is_panic,
+    numeric_value,
+    protocol_value,
+)
 from .vocabulary import translate_elk_voice
 
 _LOGGER = logging.getLogger(__name__)
 
-# Covers the worst-case baud sweep (5 rates) plus a couple of retry/backoff
+# Covers the worst-case baud sweep (9 rates) plus a couple of retry/backoff
 # cycles; the transport itself retries indefinitely, so this is a ceiling on
 # how long first setup waits before surfacing ConfigEntryNotReady, not a
 # retry-count limit.
 CONNECT_TIMEOUT = 30.0
+COMMAND_RESPONSE_TIMEOUT = 6.0
+POLL_RESPONSE_TIMEOUT = 12.0
 
 
 class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
@@ -58,8 +71,8 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     proactively broadcasts state changes; elkm1_lib decodes those and
     updates its own typed Zone/Area/Output/etc. objects, which this
     coordinator observes via per-element callbacks and immediately pushes
-    onward via async_set_updated_data(). `update_interval` below is a
-    safety-net resync of already-cached state, not the primary data path.
+    onward via async_set_updated_data(). `update_interval` below performs a
+    bounded AS/AZ/CS/SS/LW safety-net refresh, not the primary data path.
     """
 
     def __init__(
@@ -85,6 +98,8 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         self._on_baud_detected = on_baud_detected
         self._url = self._build_connection_url()
         self._raw_trouble_status = ""
+        self._keypad_status: dict[int, dict[str, Any]] = {}
+        self.last_command_timeout: str | None = None
         # Counts of unsolicited broadcasts seen per message type since
         # connecting, used by helpers/panel_settings.py to empirically infer
         # whether the panel's Global Programming "Xmit ... Changes" settings
@@ -112,9 +127,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         manager = self._connection_manager
         return {
             "transport": self._connection_type,
-            "transport_state": (
-                manager.transport_state if manager is not None else "stopped"
-            ),
+            "transport_state": (manager.transport_state if manager is not None else "stopped"),
             "detected_baud": manager.detected_baud if manager is not None else None,
             "login_state": manager.login_state if manager is not None else "unknown",
             "reconnect_count": manager.reconnect_count if manager is not None else 0,
@@ -128,6 +141,8 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
                 self.last_poll_success.isoformat() if self.last_poll_success else None
             ),
             "broadcast_counts": self.broadcast_counts,
+            "last_command_timeout": self.last_command_timeout,
+            "keypad_status": self._keypad_status,
         }
 
     def _build_connection_url(self) -> str:
@@ -164,11 +179,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     @staticmethod
     def _get_enum_value(obj: Any, default: int = 0) -> int:
         """Safely extract integer value from enum or string objects."""
-        if hasattr(obj, "value"):
-            return int(obj.value)
-        if isinstance(obj, str):
-            return int(obj) if obj.isdigit() else default
-        return int(obj) if isinstance(obj, (int, float)) else default
+        return numeric_value(obj, default)
 
     async def _async_setup(self) -> None:
         """One-time connection setup, run once before the first refresh."""
@@ -192,6 +203,9 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         elk.add_handler("SS", self._handle_trouble_status)
         elk.add_handler("ZD", self._handle_zone_definitions)
         elk.add_handler("SD", self._handle_description_sync)
+        elk.add_handler("PC_ALL", self._handle_all_lights)
+        elk.add_handler("KC_DETAIL", self._handle_keypad_detail)
+        elk.add_handler("timeout", self._handle_command_timeout)
         elk.add_handler("disconnected", self._handle_disconnected)
         for msg_type in self._broadcast_counts:
             elk.add_handler(msg_type, self._count_broadcast(msg_type))
@@ -229,9 +243,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         succeeded_task = asyncio.create_task(
             login_succeeded_event.wait(), name="elkm1-login-success"
         )
-        failed_task = asyncio.create_task(
-            login_failed_event.wait(), name="elkm1-login-failure"
-        )
+        failed_task = asyncio.create_task(login_failed_event.wait(), name="elkm1-login-failure")
         try:
             done, _pending = await asyncio.wait(
                 (succeeded_task, failed_task),
@@ -246,9 +258,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             for task in (succeeded_task, failed_task):
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(
-                succeeded_task, failed_task, return_exceptions=True
-            )
+            await asyncio.gather(succeeded_task, failed_task, return_exceptions=True)
 
         if failed_task in done:
             await manager.async_stop()
@@ -258,9 +268,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         if succeeded_task not in done:
             await manager.async_stop()
             self._elk = None
-            raise UpdateFailed(
-                f"Timed out connecting to Elk-M1 at {self._obfuscated_url()}"
-            )
+            raise UpdateFailed(f"Timed out connecting to Elk-M1 at {self._obfuscated_url()}")
 
         self._register_push_callbacks()
 
@@ -296,15 +304,49 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         if not keypress:
             return
         key_name, key = keypress
+        event_data: dict[str, Any] = {
+            ATTR_KEYPAD_ID: keypad.index + 1,
+            ATTR_KEYPAD_NAME: keypad.name,
+            ATTR_KEY: key,
+            ATTR_KEY_NAME: key_name,
+        }
+        event_data.update(self._keypad_status.get(keypad.index, {}))
         self.hass.bus.async_fire(
             EVENT_ELKM1_KEYPAD_KEY_PRESSED,
-            {
-                ATTR_KEYPAD_ID: keypad.index + 1,
-                ATTR_KEYPAD_NAME: keypad.name,
-                ATTR_KEY: key,
-                ATTR_KEY_NAME: key_name,
-            },
+            event_data,
         )
+
+    def _handle_keypad_detail(
+        self,
+        keypad: int,
+        key: int,
+        function_key_lights: tuple[int, ...],
+        bypass_requires_code: bool,
+        beep_chime_by_area: tuple[int, ...],
+    ) -> None:
+        """Preserve the complete KC status fields omitted by elkm1-lib."""
+        self._keypad_status[keypad] = {
+            "function_key_lights": list(function_key_lights),
+            "bypass_requires_code": bypass_requires_code,
+            "beep_chime_by_area": list(beep_chime_by_area),
+        }
+
+    def _handle_all_lights(self, house_index: int, aggregate_code: int) -> None:
+        """Apply a PC house/unit 00 aggregate update to all 16 house units."""
+        if self._elk is None:
+            return
+        if aggregate_code not in (1, 2, 7):
+            _LOGGER.warning("Ignoring unknown ELK all-lights code %s", aggregate_code)
+            return
+        light_level = 1 if aggregate_code == 2 else 0
+        start = house_index * 16
+        for light_index in range(start, start + 16):
+            light = self._elk.lights[light_index]
+            light.setattr("status", light_level, True)
+
+    def _handle_command_timeout(self, msg_code: str | None) -> None:
+        """Expose library-level command timeouts in transport diagnostics."""
+        self.last_command_timeout = msg_code
 
     def _count_broadcast(self, msg_type: str) -> Callable[..., None]:
         """Return a handler that increments this message type's seen-count."""
@@ -384,7 +426,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         per-condition string directly rather than Panel's already-joined
         display string, which loses which individual conditions are active.
         """
-        self._raw_trouble_status = system_trouble_status
+        self._raw_trouble_status = normalize_trouble_status(system_trouble_status)
         self.async_set_updated_data(self._build_normalized_data())
 
     async def async_disconnect(self) -> None:
@@ -427,23 +469,27 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         for area in configured_areas:
             t1 = getattr(area, "timer1", 0)
             t2 = getattr(area, "timer2", 0)
+            is_exit = bool(getattr(area, "is_exit", False))
             armed_val = self._get_enum_value(area.armed_status)  # type: ignore[attr-defined]
+            alarm_state = protocol_value(area.alarm_state)  # type: ignore[attr-defined]
             areas_dict[area.index] = AreaData(
-                alarm_state=self._get_enum_value(area.alarm_state),  # type: ignore[attr-defined]
+                alarm_state=alarm_state,
                 armed_status=armed_val,
                 arm_up_state=self._get_enum_value(area.arm_up_state),  # type: ignore[attr-defined]
                 timer1=t1,
                 timer2=t2,
-                entry_delay_active=(t1 > 0 and armed_val != 0),
-                exit_delay_active=t2 > 0,
-                panic_state=getattr(area, "panic_state", False),
+                entry_delay_active=not is_exit and (t1 > 0 or t2 > 0),
+                exit_delay_active=is_exit and (t1 > 0 or t2 > 0),
+                entry_delay=max(t1, t2) if not is_exit else 0,
+                exit_delay=max(t1, t2) if is_exit else 0,
+                panic_state=alarm_is_panic(alarm_state),
                 alarm_memory=getattr(area, "alarm_memory", False),
             )
 
         faulted_indices: list[int] = []
         faulted_names: list[str] = []
         bypassed_names: list[str] = []
-        fire_alarm = False
+        fire_alarm = any(alarm_is_fire(area.alarm_state) for area in areas_dict.values())
 
         for zone in zones:
             if not zone.configured:
@@ -459,7 +505,9 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
                 faulted_names.append(f"Zone {zone.index + 1}: {zone.name}")
             if logical == 3:
                 bypassed_names.append(f"Zone {zone.index + 1}: {zone.name}")
-            if definition in (9, 10) and logical == 2:
+            if definition in FIRE_ZONE_DEFINITIONS and bool(
+                getattr(zone, "triggered_alarm", False)
+            ):
                 fire_alarm = True
 
         active_outputs: list[int] = []
@@ -477,6 +525,8 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
 
         is_any_armed = any(a.armed_status != 0 for a in areas_dict.values())
         troubles = parse_troubles(self._raw_trouble_status)
+        trouble_details = parse_trouble_details(self._raw_trouble_status)
+        trouble_known = bool(self._raw_trouble_status)
 
         return ElkPanelData(
             panel_version=getattr(panel, "elkm1_version", None),
@@ -502,20 +552,109 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             active_output_names=active_output_names,
             trouble_status=any(troubles.values()),
             troubles=troubles,
+            trouble_details=trouble_details,
             raw_trouble_status=self._raw_trouble_status,
-            ac_power=True,
-            battery_status="Good",
+            ac_power=(not troubles.get("ac_fail", False)) if trouble_known else None,
+            battery_status=(
+                "Low"
+                if trouble_known and troubles.get("low_battery", False)
+                else "Good"
+                if trouble_known
+                else "Unknown"
+            ),
             panel_temperature=panel_temp,
             fire_alarm_active=fire_alarm,
             bypassed_zones=bypassed_names,
         )
 
     async def _async_update_data(self) -> ElkPanelData:
-        """Safety-net resync; the primary data path is push via element callbacks."""
+        """Request a protocol-safe status refresh; push remains the primary path."""
         if not self._elk or not self._elk.is_connected():
             raise UpdateFailed("Not connected to Elk-M1")
+
+        expected = {"AS", "AZ", "CS", "SS", "LW"}
+        received: set[str] = set()
+        refreshed = asyncio.Event()
+        handlers: dict[str, Callable[..., None]] = {}
+
+        for command in expected:
+
+            def _mark_received(_command: str = command, **_payload: Any) -> None:
+                received.add(_command)
+                if received == expected:
+                    refreshed.set()
+
+            handlers[command] = _mark_received
+            self._elk.add_handler(command, _mark_received)
+
+        try:
+            for message in (as_encode(), az_encode(), cs_encode(), ss_encode(), lw_encode()):
+                self._elk.send(message)
+            async with asyncio.timeout(POLL_RESPONSE_TIMEOUT):
+                await refreshed.wait()
+        except TimeoutError as err:
+            missing = ", ".join(sorted(expected - received))
+            raise UpdateFailed(f"ELK-M1 status refresh timed out waiting for: {missing}") from err
+        except (ConnectionError, OSError) as err:
+            raise UpdateFailed(f"ELK-M1 status refresh could not be sent: {err}") from err
+        finally:
+            for command, handler in handlers.items():
+                self._elk.remove_handler(command, handler)
+
         self.last_poll_success = datetime.now(UTC)
         return self._build_normalized_data()
+
+    def _ensure_command_ready(self) -> None:
+        """Reject writes that cannot currently reach the panel."""
+        if self._elk is None or not self._elk.is_connected():
+            raise HomeAssistantError("ELK-M1 command rejected: panel is disconnected")
+        if self._elk.is_paused():
+            raise HomeAssistantError("ELK-M1 command rejected: ELKRP has paused automation traffic")
+
+    async def async_queue_command(self, sender: Callable[[], None], description: str) -> bool:
+        """Queue a command for which the ELK protocol defines no acknowledgement."""
+        self._ensure_command_ready()
+        try:
+            sender()
+        except Exception as err:
+            raise HomeAssistantError(f"Unable to queue ELK-M1 {description}: {err}") from err
+        await asyncio.sleep(0)
+        return True
+
+    async def async_confirm_command(
+        self,
+        sender: Callable[[], None],
+        response_command: str,
+        description: str,
+        predicate: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> bool:
+        """Send a request and require its documented, validated response."""
+        self._ensure_command_ready()
+        assert self._elk is not None
+        response = asyncio.Event()
+
+        def _response_handler(**payload: Any) -> None:
+            if predicate is None or predicate(payload):
+                response.set()
+
+        self._elk.add_handler(response_command, _response_handler)
+        try:
+            sender()
+            async with asyncio.timeout(COMMAND_RESPONSE_TIMEOUT):
+                await response.wait()
+        except TimeoutError as err:
+            self.last_command_timeout = response_command
+            raise HomeAssistantError(
+                f"ELK-M1 {description} was not confirmed by a valid {response_command} response"
+            ) from err
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            raise HomeAssistantError(f"Unable to send ELK-M1 {description}: {err}") from err
+        finally:
+            self._elk.remove_handler(response_command, _response_handler)
+        self.last_command_timeout = None
+        return True
 
     # ---- STANDARDIZED ALARM CONTROL PANEL METHODS ----
 
@@ -552,30 +691,51 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         return await self._execute_arm_cmd(ArmLevel.ARMED_AWAY, area_index, code)
 
     async def async_alarm_trigger(self, area_index: int, code: int = 0) -> bool:
-        """Trigger panic alarm on the area."""
-        return await self.panic_alarm(str(code) if code else None)
+        """Reject panic control, which the third-party protocol does not provide."""
+        raise HomeAssistantError("ELK-M1 protocol v1.90 provides no third-party panic command")
 
     async def _execute_arm_cmd(self, level: ArmLevel, area_index: int, code: int = 0) -> bool:
         """Arm/disarm an area using elkm1_lib's own checksummed Area helpers."""
         if not self._elk:
-            return False
+            raise HomeAssistantError("ELK-M1 panel is unavailable")
         active_pin = code if code > 0 else int(self._pin or 0)
         area = cast(Any, self._elk.areas[area_index])
-        if level == ArmLevel.DISARM:
-            area.disarm(active_pin)
-        else:
-            area.arm(level, active_pin)
-        return True
+        expected = level.value
+
+        if protocol_value(area.armed_status) == expected:
+            return True
+
+        def _matches(payload: dict[str, Any]) -> bool:
+            statuses = payload.get("armed_statuses", [])
+            return area_index < len(statuses) and protocol_value(statuses[area_index]) == expected
+
+        def sender() -> None:
+            if level == ArmLevel.DISARM:
+                area.disarm(active_pin)
+            else:
+                area.arm(level, active_pin)
+
+        return await self.async_confirm_command(sender, "AS", "arm/disarm command", _matches)
 
     # ---- ADDITIONAL HARDWARE METHODS ----
 
     async def bypass_zone(self, zone_number: int, pin_code: str | None = None) -> bool:
         """Bypass a zone (1-indexed, matching the panel's own numbering)."""
         if not self._elk:
-            return False
+            raise HomeAssistantError("ELK-M1 panel is unavailable")
         active_pin = int(pin_code) if pin_code else int(self._pin or 0)
-        cast(Any, self._elk.zones[zone_number - 1]).bypass(active_pin)
-        return True
+        zone_index = zone_number - 1
+        zone = cast(Any, self._elk.zones[zone_index])
+        expected_bypassed = self._get_enum_value(zone.logical_status) != 3
+        return await self.async_confirm_command(
+            lambda: zone.bypass(active_pin),
+            "ZB",
+            f"zone {zone_number} bypass toggle",
+            lambda payload: (
+                payload.get("zone_number") == zone_index
+                and payload.get("zone_bypassed") is expected_bypassed
+            ),
+        )
 
     async def unbypass_zone(self, zone_number: int, pin_code: str | None = None) -> bool:
         """Clear a zone's bypass.
@@ -586,18 +746,40 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         """
         return await self.bypass_zone(zone_number, pin_code)
 
-    async def bypass_area(self, area_index: int, pin_code: str | None = None) -> bool:
-        """Toggle bypass for all zones in an area.
-
-        Like the per-zone `zb` command, the Elk protocol's all-zone bypass
-        (zone number 999) is a single toggle with no separate "set"/"clear"
-        variant - calling this again reverses it.
-        """
+    async def trigger_zone(self, zone_number: int) -> bool:
+        """Trigger a zone; the protocol defines no direct acknowledgement."""
         if not self._elk:
-            return False
+            raise HomeAssistantError("ELK-M1 panel is unavailable")
+        zone = cast(Any, self._elk.zones[zone_number - 1])
+        return await self.async_queue_command(
+            zone.trigger, f"zone {zone_number} trigger (unconfirmed)"
+        )
+
+    async def bypass_area(self, area_index: int, pin_code: str | None = None) -> bool:
+        """Bypass all violated burglar zones in an area with ``zb999``."""
+        if not self._elk:
+            raise HomeAssistantError("ELK-M1 panel is unavailable")
         active_pin = int(pin_code) if pin_code else int(self._pin or 0)
-        cast(Any, self._elk.areas[area_index]).bypass(active_pin)
-        return True
+        area = cast(Any, self._elk.areas[area_index])
+        return await self.async_confirm_command(
+            lambda: area.bypass(active_pin),
+            "ZB",
+            f"area {area_index + 1} bypass",
+            lambda payload: payload.get("zone_number") == 998,
+        )
+
+    async def clear_bypass_area(self, area_index: int, pin_code: str | None = None) -> bool:
+        """Clear all burglar-zone bypasses in an area with ``zb000``."""
+        if not self._elk:
+            raise HomeAssistantError("ELK-M1 panel is unavailable")
+        active_pin = int(pin_code) if pin_code else int(self._pin or 0)
+        area = cast(Any, self._elk.areas[area_index])
+        return await self.async_confirm_command(
+            lambda: area.clear_bypass(active_pin),
+            "ZB",
+            f"area {area_index + 1} clear bypass",
+            lambda payload: payload.get("zone_number") == -1,
+        )
 
     async def display_message(
         self,
@@ -610,58 +792,33 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     ) -> bool:
         """Display a message on all keypads in an area via Area.display_message()."""
         if not self._elk:
-            return False
-        cast(Any, self._elk.areas[area_index]).display_message(
-            clear, beep, timeout, line1, line2
+            raise HomeAssistantError("ELK-M1 panel is unavailable")
+        area = cast(Any, self._elk.areas[area_index])
+        return await self.async_queue_command(
+            lambda: area.display_message(clear, beep, timeout, line1, line2),
+            "keypad display message",
         )
-        return True
 
     async def speak_word(self, word: int) -> bool:
         """Speak a single word from the panel's voice vocabulary."""
         if not self._elk or self._elk.panel is None:
-            return False
-        self._elk.panel.speak_word(word)
-        return True
+            raise HomeAssistantError("ELK-M1 panel is unavailable")
+        panel = self._elk.panel
+        return await self.async_queue_command(lambda: panel.speak_word(word), "speak word")
 
     async def speak_phrase(self, phrase: int) -> bool:
         """Speak a phrase from the panel's voice vocabulary."""
         if not self._elk or self._elk.panel is None:
-            return False
-        self._elk.panel.speak_phrase(phrase)
-        return True
+            raise HomeAssistantError("ELK-M1 panel is unavailable")
+        panel = self._elk.panel
+        return await self.async_queue_command(lambda: panel.speak_phrase(phrase), "speak phrase")
 
     async def set_panel_time(self, when: datetime | None = None) -> bool:
         """Write the panel's real-time clock (defaults to the current time)."""
         if not self._elk or self._elk.panel is None:
-            return False
-        self._elk.panel.set_time(when)
-        return True
-
-    async def panic_alarm(self, pin_code: str | None = None) -> bool:
-        """Trigger panic alarm."""
-        if not self._elk:
-            return False
-        active_pin = pin_code if pin_code is not None else self._pin
-        formatted_pin = str(active_pin).zfill(6)
-        await self.send_raw_elk_command(f"ap1{formatted_pin}")
-        return True
-
-    async def send_raw_elk_command(self, command: str) -> None:
-        """Send a raw Elk ASCII command body (without length/checksum/CRLF).
-
-        Delegates checksum computation and write-queue serialization
-        entirely to elkm1_lib's own Connection.send(), rather than
-        recomputing the checksum by hand and reaching into connection
-        internals - kept as a fallback for commands that don't yet have a
-        typed elkm1_lib subsystem helper (see areas.py/zones.py/outputs.py/
-        thermostats.py for the ones that do, e.g. Area.arm(), Zone.bypass(),
-        Output.turn_on(), used directly above where available).
-        """
-        if not self._elk:
-            _LOGGER.error("Cannot send raw command: Elk instance not found.")
-            return
-        length_hex = f"{len(command) + 4:02X}"
-        self._elk.send(MessageEncode(f"{length_hex}{command}00", None))
+            raise HomeAssistantError("ELK-M1 panel is unavailable")
+        panel = self._elk.panel
+        return await self.async_confirm_command(lambda: panel.set_time(when), "RR", "clock update")
 
     def _handle_voice_message(self, *args: Any, **kwargs: Any) -> None:
         """Process incoming voice command arrays and fire a Home Assistant event."""

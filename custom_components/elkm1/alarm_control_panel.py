@@ -21,6 +21,11 @@ from .const import ELK_USER_CODE_SERVICE_SCHEMA
 from .coordinator import ElkDataUpdateCoordinator
 from .entity import ElkEntity
 from .models import AreaData, ElkRuntimeData
+from .protocol import (
+    ALARM_STATE_ABORT_DELAY,
+    ALARM_STATE_ENTRANCE_DELAY,
+    alarm_is_active,
+)
 
 SERVICE_ALARM_BYPASS = "alarm_bypass"
 SERVICE_ALARM_CLEAR_BYPASS = "alarm_clear_bypass"
@@ -94,7 +99,6 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
         | AlarmControlPanelEntityFeature.ARM_NIGHT
         | AlarmControlPanelEntityFeature.ARM_VACATION
         | AlarmControlPanelEntityFeature.ARM_CUSTOM_BYPASS
-        | AlarmControlPanelEntityFeature.TRIGGER
     )
     _attr_code_format = CodeFormat.NUMBER
     _attr_code_arm_required = True
@@ -130,16 +134,18 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
         armed_status_val = data.armed_status
         arm_up_state_val = data.arm_up_state
 
-        # 1. TRIGGERED: Elk AlarmState >= 2
-        if alarm_state_val >= 2:
+        # Full alarm is exactly the documented '3' through 'B' state table.
+        if alarm_is_active(alarm_state_val):
             return STATE_ALARM_TRIGGERED
 
-        # 2. PENDING (Entry Delay): Elk AlarmState == 1 OR Timer1 running while armed
-        if alarm_state_val == 1 or (data.timer1 > 0 and armed_status_val != 0):
+        # Abort delay is still a cancellable pending interval, not full alarm.
+        if alarm_state_val in (ALARM_STATE_ENTRANCE_DELAY, ALARM_STATE_ABORT_DELAY):
+            return AlarmControlPanelState.PENDING
+        if data.entry_delay_active:
             return AlarmControlPanelState.PENDING
 
-        # 3. ARMING (Exit Delay): Timer2 running or exit state indicated
-        if data.timer2 > 0 or arm_up_state_val in (3, 5):
+        # Force-armed state 5 is stable; only state 3 is the exit timer.
+        if data.exit_delay_active or arm_up_state_val == 3:
             return AlarmControlPanelState.ARMING
 
         # 4. ARMED_CUSTOM_BYPASS: Armed with Bypass active
@@ -187,9 +193,11 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
             "ac_power": global_data.ac_power,
             "battery_status": global_data.battery_status,
             "panel_temperature": global_data.panel_temperature,
-            "connection_status": "Connected" if self.coordinator.last_update_success else "Disconnected",
+            "connection_status": "Connected"
+            if self.coordinator.last_update_success
+            else "Disconnected",
             "last_update": self.coordinator.last_update_success,
-            "alarm_triggered": area_data.alarm_state >= 2,
+            "alarm_triggered": alarm_is_active(area_data.alarm_state),
             "fire_alarm": global_data.fire_alarm_active,
             "panic_alarm": area_data.panic_state,
             "alarm_memory": area_data.alarm_memory,
@@ -203,9 +211,8 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
             return 0
         try:
             return int(code)
-        except ValueError:
-            _LOGGER.warning("Invalid PIN code format. Expected numeric digits.")
-            return 0
+        except ValueError as err:
+            raise HomeAssistantError("ELK-M1 PIN must contain numeric digits only") from err
 
     async def _async_run_command(self, coro: Any, action_desc: str) -> None:
         """Await a coordinator command, raising HomeAssistantError on failure.
@@ -268,10 +275,9 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
         )
 
     async def async_alarm_trigger(self, code: str | None = None) -> None:
-        """Trigger the alarm on the area via the coordinator."""
-        await self._async_run_command(
-            self.coordinator.async_alarm_trigger(self._area_index, self._get_code_val(code)),
-            "triggering alarm",
+        """Reject panic control: ELK v1.90 exposes no third-party panic command."""
+        raise HomeAssistantError(
+            "ELK-M1 protocol v1.90 does not support third-party panic triggering"
         )
 
     async def async_alarm_arm_home_instant(self, code: str | None = None) -> None:
@@ -299,12 +305,8 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
         )
 
     async def async_alarm_clear_bypass(self, code: str | None = None) -> None:
-        """Toggle bypass of all zones in the area via the elkm1.alarm_clear_bypass service.
-
-        The Elk protocol's all-zone bypass command is a toggle with no
-        separate "clear" variant, so this sends the same command as
-        `async_alarm_bypass` - resending it clears an active area bypass.
-        """
+        """Clear all area bypasses with the protocol's dedicated ``zb000`` form."""
         await self._async_run_command(
-            self.coordinator.bypass_area(self._area_index, code), "clearing bypass on"
+            self.coordinator.clear_bypass_area(self._area_index, code),
+            "clearing bypass on",
         )

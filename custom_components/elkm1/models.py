@@ -25,12 +25,12 @@ class ElkRuntimeData:
 class AreaData:
     """Normalized per-area state.
 
-    Field values are plain ints (not elkm1_lib enums) so entity code can
-    compare against literal Elk protocol values without importing/handling
-    enum types - the coordinator does that conversion once, here.
+    Arming fields are numeric protocol values. Alarm state remains its exact
+    one-character wire value because valid v1.90 states include ':' through
+    'B' and must never be coerced to integers.
     """
 
-    alarm_state: int = 0
+    alarm_state: str = "0"
     armed_status: int = 0
     arm_up_state: int = 0
     timer1: int = 0
@@ -81,9 +81,10 @@ class ElkPanelData:
     active_output_names: list[str] = field(default_factory=list)
     trouble_status: bool = False
     troubles: dict[str, bool] = field(default_factory=dict)
+    trouble_details: dict[str, int] = field(default_factory=dict)
     raw_trouble_status: str = ""
-    ac_power: bool = True
-    battery_status: str = "Good"
+    ac_power: bool | None = None
+    battery_status: str = "Unknown"
     panel_temperature: float | None = None
     fire_alarm_active: bool = False
     bypassed_zones: list[str] = field(default_factory=list)
