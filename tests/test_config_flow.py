@@ -1,70 +1,60 @@
-"""Tests for the Elk-M1 config flow: user/manual/serial steps, options,
-reconfigure, and reauth.
-"""
+"""Tests for configuration, identity, reconfigure, and reauth contracts."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from elkm1_lib.discovery import ElkSystem
+from homeassistant import config_entries
+from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 
 from custom_components.elkm1.const import CONF_POLL_INTERVAL, DOMAIN
-from custom_components.elkm1.helpers.transport import ConnectionTimeoutError, InvalidAuthError
-from custom_components.elkm1.models import ElkPanelData
-
-
-async def _fake_first_refresh(self) -> None:
-    """Stand in for a real connection attempt (sets coordinator.data directly)."""
-    self.data = ElkPanelData()
-
-
-# Patches the coordinator's first refresh for tests that intentionally
-# create/reconfigure a real config entry: entry creation schedules a real
-# setup as part of finishing the flow, and without this the coordinator
-# would actually try to open a network connection (slow, and blocked by
-# pytest-socket in this sandbox) rather than exercising the flow logic
-# these tests are actually about. __init__.py reads coordinator.data.
-# panel_version right after the refresh, so the fake still has to set
-# coordinator.data to something real rather than skipping it outright.
-_PATCH_COORDINATOR_SETUP = patch(
-    "custom_components.elkm1.coordinator.ElkDataUpdateCoordinator.async_config_entry_first_refresh",
-    _fake_first_refresh,
+from custom_components.elkm1.helpers.transport import (
+    ConnectionTimeoutError,
+    InvalidAuthError,
 )
 
-
-async def test_user_step_shows_form_with_manual_options(hass):
-    """The initial user step lists at least the manual network/serial options."""
-    with patch(
-        "custom_components.elkm1.config_flow.async_discover_devices",
-        AsyncMock(return_value=[]),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": "user"}
-        )
-
-    assert result["type"] == "form"
-    assert result["step_id"] == "user"
-    options = result["data_schema"].schema[next(iter(result["data_schema"].schema))].container
-    assert "manual_network_flow" in options
-    assert "serial_port_flow" in options
+MAC = "aa:bb:cc:dd:ee:ff"
+DEVICE = ElkSystem(MAC, "1.2.3.4", 2601)
 
 
-async def test_manual_connection_success(hass):
-    """A valid manual network connection creates a config entry."""
+async def _start_manual_network(hass):
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"connection_type": "network"}
+    )
+    assert result["step_id"] == "network"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"device": "manual_network"}
+    )
+    assert result["step_id"] == "manual_connection"
+    return result
+
+
+async def test_manual_network_verify_options_complete(hass):
+    """Manual network setup verifies, collects options, and owns canonical data."""
     with (
+        patch(
+            "custom_components.elkm1.config_flow.async_discover_devices",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "custom_components.elkm1.config_flow.async_discover_device",
+            AsyncMock(return_value=DEVICE),
+        ),
         patch(
             "custom_components.elkm1.config_flow.validate_network_connection",
             AsyncMock(return_value=None),
         ),
-        _PATCH_COORDINATOR_SETUP,
+        patch(
+            "custom_components.elkm1.async_setup_entry",
+            AsyncMock(return_value=True),
+        ),
     ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": "user"}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"device": "manual_network_flow"}
-        )
-        assert result["step_id"] == "manual_connection"
-
+        result = await _start_manual_network(hass)
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
@@ -74,262 +64,295 @@ async def test_manual_connection_success(hass):
                 "prefix": "",
                 "protocol": "secure",
             },
+        )
+        assert result["step_id"] == "elkm1_options"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_POLL_INTERVAL: 45}
         )
 
     assert result["type"] == "create_entry"
+    assert result["data"]["connection_type"] == "network"
     assert result["data"]["host"] == "elks://1.2.3.4"
+    assert result["data"]["mac_address"] == MAC
+    assert result["options"] == {CONF_POLL_INTERVAL: 45}
+    assert result["result"].unique_id == MAC
 
 
-async def test_manual_connection_cannot_connect(hass):
-    """A connection failure surfaces cannot_connect, not a crash."""
-    with patch(
-        "custom_components.elkm1.config_flow.validate_network_connection",
-        AsyncMock(side_effect=ConnectionTimeoutError("timed out")),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": "user"}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"device": "manual_network_flow"}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "address": "1.2.3.4",
-                "username": "admin",
-                "password": "secret",
-                "prefix": "",
-                "protocol": "secure",
-            },
-        )
-
-    assert result["type"] == "form"
-    assert result["errors"]["base"] == "cannot_connect"
-
-
-async def test_manual_connection_invalid_auth(hass):
-    """Bad credentials surface invalid_auth on the password field."""
-    with patch(
-        "custom_components.elkm1.config_flow.validate_network_connection",
-        AsyncMock(side_effect=InvalidAuthError("rejected")),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": "user"}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"device": "manual_network_flow"}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "address": "1.2.3.4",
-                "username": "admin",
-                "password": "wrong",
-                "prefix": "",
-                "protocol": "secure",
-            },
-        )
-
-    assert result["type"] == "form"
-    assert result["errors"]["password"] == "invalid_auth"
-
-
-async def test_serial_step_success(hass):
-    """A verified serial port creates a config entry."""
+@pytest.mark.parametrize(
+    ("exception", "error_key", "error_value"),
+    [
+        (ConnectionTimeoutError("timeout"), "base", "cannot_connect"),
+        (InvalidAuthError("rejected"), "password", "invalid_auth"),
+    ],
+)
+async def test_manual_network_errors(
+    hass, exception, error_key: str, error_value: str
+):
+    """Transport timeout and credential rejection remain distinguishable."""
     with (
         patch(
-            "custom_components.elkm1.config_flow.probe_serial_port",
-            AsyncMock(return_value=True),
+            "custom_components.elkm1.config_flow.async_discover_devices",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "custom_components.elkm1.config_flow.async_discover_device",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "custom_components.elkm1.config_flow.validate_network_connection",
+            AsyncMock(side_effect=exception),
+        ),
+    ):
+        result = await _start_manual_network(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                "address": "1.2.3.4",
+                "username": "admin",
+                "password": "bad",
+                "prefix": "",
+                "protocol": "secure",
+            },
+        )
+    assert result["type"] == "form"
+    assert result["errors"][error_key] == error_value
+
+
+async def test_serial_probes_only_selected_port_and_caches_baud(hass):
+    """Serial setup probes the submitted selector value and stores its baud."""
+    validate = AsyncMock(return_value=57600)
+    with (
+        patch(
+            "custom_components.elkm1.config_flow.validate_serial_port", validate
         ),
         patch(
             "custom_components.elkm1.config_flow.get_persistent_port_path",
-            side_effect=lambda p: p,
+            side_effect=lambda value: f"/dev/serial/by-id/{value.rsplit('/', 1)[-1]}",
+        ),
+        patch(
+            "custom_components.elkm1.async_setup_entry",
+            AsyncMock(return_value=True),
         ),
     ):
         result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": "user"}
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"device": "serial_port_flow"}
+            result["flow_id"], {"connection_type": "serial"}
         )
         assert result["step_id"] == "serial"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                "serial_port": "/dev/ttyUSB0",
+                "prefix": "panel",
+                "pin": "1234",
+            },
+        )
+        assert result["step_id"] == "elkm1_options"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_POLL_INTERVAL: 60}
+        )
 
+    validate.assert_awaited_once_with("/dev/serial/by-id/ttyUSB0")
+    assert result["data"]["serial_port"] == "/dev/serial/by-id/ttyUSB0"
+    assert result["data"]["baud_rate"] == 57600
+    assert result["result"].unique_id == "serial:/dev/serial/by-id/ttyUSB0"
+
+
+async def test_serial_probe_failure_does_not_create_entry(hass):
+    """A non-ELK selected serial endpoint stays on the serial form."""
+    with (
+        patch(
+            "custom_components.elkm1.config_flow.validate_serial_port",
+            AsyncMock(side_effect=OSError("not an Elk")),
+        ),
+        patch(
+            "custom_components.elkm1.config_flow.get_persistent_port_path",
+            side_effect=lambda value: value,
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"connection_type": "serial"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"serial_port": "/dev/ttyUSB9", "prefix": "", "pin": ""},
+        )
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_dhcp_uses_directed_discovery_then_confirmation(hass):
+    """DHCP identity is completed with the upstream directed discovery."""
+    directed = AsyncMock(return_value=DEVICE)
+    with patch(
+        "custom_components.elkm1.config_flow.async_discover_device", directed
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_DHCP},
+            data=DhcpServiceInfo("1.2.3.4", "", "aabbccddeeff"),
+        )
+    assert result["type"] == "form"
+    assert result["step_id"] == "discovery_confirm"
+    directed.assert_awaited_once_with(hass, "1.2.3.4")
+
+
+async def test_duplicate_network_identity_is_rejected(hass, mock_network_entry):
+    """The formatted panel MAC, not merely an address, prevents duplicates."""
+    mock_network_entry.add_to_hass(hass)
+    with patch(
+        "custom_components.elkm1.config_flow.async_discover_devices",
+        AsyncMock(return_value=[DEVICE]),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"connection_type": "network"}
+        )
+    choices = result["data_schema"].schema[
+        next(iter(result["data_schema"].schema))
+    ].container
+    assert MAC not in choices
+
+
+async def test_reconfigure_network_rejects_different_panel(
+    hass, mock_network_entry
+):
+    """Network reconfigure aborts when directed discovery returns another MAC."""
+    mock_network_entry.add_to_hass(hass)
+    different = ElkSystem("11:22:33:44:55:66", "5.6.7.8", 2601)
+    with (
+        patch(
+            "custom_components.elkm1.config_flow.async_discover_device",
+            AsyncMock(return_value=different),
+        ),
+        patch(
+            "custom_components.elkm1.config_flow.validate_network_connection",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        result = await mock_network_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                "address": "5.6.7.8",
+                "username": "new",
+                "password": "secret",
+                "protocol": "secure",
+            },
+        )
+    assert result["type"] == "abort"
+    assert result["reason"] == "unique_id_mismatch"
+
+
+async def test_reconfigure_serial_updates_same_persistent_adapter(
+    hass, mock_serial_entry
+):
+    """Serial reconfigure verifies and updates the same stable adapter identity."""
+    mock_serial_entry.add_to_hass(hass)
+    with (
+        patch(
+            "custom_components.elkm1.config_flow.validate_serial_port",
+            AsyncMock(return_value=38400),
+        ),
+        patch(
+            "custom_components.elkm1.config_flow.get_persistent_port_path",
+            side_effect=lambda value: value,
+        ),
+    ):
+        result = await mock_serial_entry.start_reconfigure_flow(hass)
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
                 "serial_port": "/dev/ttyUSB0",
                 "prefix": "elkm1",
                 "pin": "",
-                "verify_device": True,
             },
         )
-
-    assert result["type"] == "create_entry"
-    assert result["data"]["serial_port"] == "/dev/ttyUSB0"
-
-
-async def test_serial_step_cannot_connect(hass):
-    """A serial port that doesn't respond surfaces cannot_connect."""
-    with (
-        patch(
-            "custom_components.elkm1.config_flow.probe_serial_port",
-            AsyncMock(return_value=False),
-        ),
-        patch(
-            "custom_components.elkm1.config_flow.get_persistent_port_path",
-            side_effect=lambda p: p,
-        ),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": "user"}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"device": "serial_port_flow"}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "serial_port": "/dev/ttyUSB99",
-                "prefix": "elkm1",
-                "pin": "",
-                "verify_device": True,
-            },
-        )
-
-    assert result["type"] == "form"
-    assert result["errors"]["base"] == "cannot_connect"
-
-
-async def test_options_flow_sets_poll_interval(hass, mock_network_entry):
-    """The options flow persists a custom poll_interval."""
-    mock_network_entry.add_to_hass(hass)
-
-    result = await hass.config_entries.options.async_init(mock_network_entry.entry_id)
-    assert result["type"] == "form"
-    assert result["step_id"] == "init"
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_POLL_INTERVAL: 60}
-    )
-    assert result["type"] == "create_entry"
-    assert mock_network_entry.options[CONF_POLL_INTERVAL] == 60
-
-
-async def test_reconfigure_network_flow(hass, mock_network_entry):
-    """Reconfiguring a network entry updates its data and reloads."""
-    mock_network_entry.add_to_hass(hass)
-
-    with (
-        patch(
-            "custom_components.elkm1.config_flow.validate_network_connection",
-            AsyncMock(return_value=None),
-        ),
-        _PATCH_COORDINATOR_SETUP,
-    ):
-        result = await mock_network_entry.start_reconfigure_flow(hass)
-        assert result["step_id"] == "reconfigure"
-
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "address": "5.6.7.8",
-                "username": "newuser",
-                "password": "newpass",
-                "protocol": "secure",
-            },
-        )
-
     assert result["type"] == "abort"
     assert result["reason"] == "reconfigure_successful"
-    assert mock_network_entry.data["host"] == "elks://5.6.7.8"
-    assert mock_network_entry.data["username"] == "newuser"
+    assert mock_serial_entry.data["baud_rate"] == 38400
 
 
-async def test_reconfigure_serial_flow(hass, mock_serial_entry):
-    """Reconfiguring a serial entry updates its serial_port and reloads."""
-    mock_serial_entry.add_to_hass(hass)
-
-    with (
-        patch(
-            "custom_components.elkm1.config_flow.probe_serial_port",
-            AsyncMock(return_value=True),
-        ),
-        patch(
-            "custom_components.elkm1.config_flow.get_persistent_port_path",
-            side_effect=lambda p: p,
-        ),
-    ):
-        result = await mock_serial_entry.start_reconfigure_flow(hass)
-        assert result["step_id"] == "reconfigure_serial"
-
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {"serial_port": "/dev/ttyUSB1", "prefix": "elkm1", "pin": ""},
-        )
-
-    assert result["type"] == "abort"
-    assert result["reason"] == "reconfigure_successful"
-    assert mock_serial_entry.data["serial_port"] == "/dev/ttyUSB1"
-
-
-async def test_reauth_flow_network(hass, mock_network_entry):
-    """Reauth on a network entry accepts new credentials and reloads."""
+async def test_reauth_updates_credentials(hass, mock_network_entry):
+    """Accepted credentials update the entry and rely on its reload listener."""
     mock_network_entry.add_to_hass(hass)
-
-    with (
-        patch(
-            "custom_components.elkm1.config_flow.validate_network_connection",
-            AsyncMock(return_value=None),
-        ),
-        _PATCH_COORDINATOR_SETUP,
-    ):
-        result = await mock_network_entry.start_reauth_flow(hass)
-        assert result["step_id"] == "reauth_confirm"
-
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"username": "newuser", "password": "newpass"}
-        )
-
-    assert result["type"] == "abort"
-    assert result["reason"] == "reauth_successful"
-    assert mock_network_entry.data["username"] == "newuser"
-
-
-async def test_reauth_flow_serial_unsupported(hass, mock_serial_entry):
-    """Reauth on a serial entry (no credentials) aborts instead of showing a broken form."""
-    mock_serial_entry.add_to_hass(hass)
-
-    result = await mock_serial_entry.start_reauth_flow(hass)
-
-    assert result["type"] == "abort"
-    assert result["reason"] == "reauth_unsupported"
-
-
-@pytest.mark.parametrize(
-    ("exc", "expected_error_key"),
-    [
-        (ConnectionTimeoutError("timeout"), "base"),
-        (InvalidAuthError("bad creds"), "password"),
-    ],
-)
-async def test_reconfigure_network_errors(hass, mock_network_entry, exc, expected_error_key):
-    """Reconfigure surfaces the same error mapping as the initial connection step."""
-    mock_network_entry.add_to_hass(hass)
-
     with patch(
         "custom_components.elkm1.config_flow.validate_network_connection",
-        AsyncMock(side_effect=exc),
+        AsyncMock(return_value=None),
     ):
-        result = await mock_network_entry.start_reconfigure_flow(hass)
+        result = await mock_network_entry.start_reauth_flow(hass)
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                "address": "5.6.7.8",
-                "username": "newuser",
-                "password": "newpass",
-                "protocol": "secure",
-            },
+            {"username": "replacement", "password": "replacement-secret"},
         )
+    assert result["type"] == "abort"
+    assert result["reason"] == "reauth_successful"
+    assert mock_network_entry.data["username"] == "replacement"
 
-    assert result["type"] == "form"
-    assert expected_error_key in result["errors"]
+
+async def test_options_flow_updates_fallback_poll(hass, mock_network_entry):
+    """Post-setup options remain supported."""
+    mock_network_entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(
+        mock_network_entry.entry_id
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_POLL_INTERVAL: 90}
+    )
+    assert result["type"] == "create_entry"
+    assert mock_network_entry.options[CONF_POLL_INTERVAL] == 90
+
+
+async def test_multiple_panels_have_isolated_identities(hass):
+    """Multiple panels are supported when their formatted MACs differ."""
+    first = ElkSystem("aa:bb:cc:dd:ee:01", "1.2.3.1", 2601)
+    second = ElkSystem("aa:bb:cc:dd:ee:02", "1.2.3.2", 2601)
+    with (
+        patch(
+            "custom_components.elkm1.config_flow.async_discover_devices",
+            AsyncMock(return_value=[first, second]),
+        ),
+        patch(
+            "custom_components.elkm1.config_flow.validate_network_connection",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "custom_components.elkm1.async_setup_entry",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        for device in (first, second):
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": config_entries.SOURCE_USER}
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {"connection_type": "network"}
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {"device": device.mac_address}
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    "username": "admin",
+                    "password": "secret",
+                    "protocol": "secure",
+                },
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {CONF_POLL_INTERVAL: 30}
+            )
+            assert result["type"] == "create_entry"
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert {entry.unique_id for entry in entries} == {
+        first.mac_address,
+        second.mac_address,
+    }

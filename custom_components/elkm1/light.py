@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar, override
+from typing import Any, override
 
-from homeassistant.components.light import ColorMode, LightEntity
+from homeassistant.components.light import LightEntity
+from homeassistant.components.light.const import ColorMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -52,8 +53,6 @@ class ElkPlcLight(ElkEntity, LightEntity):
     """Representation of an Elk-M1 PLC lighting device."""
 
     _attr_color_mode = ColorMode.BRIGHTNESS
-    _attr_supported_color_modes: ClassVar[set[ColorMode]] = {ColorMode.BRIGHTNESS}
-
     def __init__(
         self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int
     ) -> None:
@@ -61,6 +60,7 @@ class ElkPlcLight(ElkEntity, LightEntity):
         super().__init__(coordinator, config_entry, f"light_{index + 1}")
         self._index = index
         self._attr_unique_id = f"{config_entry.entry_id}_light_{index + 1}"
+        self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
 
     def _get_obj(self) -> Any:
         if self.coordinator.data and self._index < len(self.coordinator.data.lights):
@@ -86,7 +86,7 @@ class ElkPlcLight(ElkEntity, LightEntity):
         obj = self._get_obj()
         if not obj:
             return None
-        return round(obj.status * _HA_MAX_BRIGHTNESS / _ELK_MAX_LEVEL)
+        return round(int(obj.status) * _HA_MAX_BRIGHTNESS / _ELK_MAX_LEVEL)
 
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:

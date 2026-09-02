@@ -31,29 +31,42 @@
       },
       "manual_connection": {
         "data": {
-          "address": "The IP address or domain or serial port if connecting via serial.",
+          "address": "The M1XEP IP address or DNS name, optionally followed by a non-standard port.",
           "password": "[%key:common::config_flow::data::password%]",
           "prefix": "A unique prefix (leave blank if you only have one Elk-M1).",
           "protocol": "Protocol",
           "temperature_unit": "The temperature unit Elk-M1 uses.",
           "username": "[%key:common::config_flow::data::username%]"
         },
-        "description": "The address string must be in the form 'address[:port]' for 'secure' and 'non-secure'. Example: '192.168.1.1'. The port is optional and defaults to 2101 for 'non-secure' and 2601 for 'secure'. For the serial protocol, the address must be in the form 'tty[:baud]'. Example: '/dev/ttyS1'. The baud is optional and defaults to 115200.",
+        "description": "Enter a network endpoint for the M1XEP. Secure connections default to port 2601 and non-secure connections default to port 2101.",
         "title": "[%key:component::elkm1::config::step::user::title%]"
+      },
+      "network": {
+        "data": {
+          "device": "Discovered panel or manual network entry"
+        },
+        "description": "Select a discovered M1XEP or choose manual network entry.",
+        "title": "Select Elk-M1 network interface"
       },
       "serial": {
         "data": {
           "serial_port": "USB / Serial Port",
           "prefix": "[%key:component::elkm1::config::step::manual_connection::data::prefix%]",
-          "pin": "PIN code (optional, only needed if your panel requires one for this action).",
-          "verify_device": "Verify an Elk-M1 responds on this port before saving (recommended)."
+          "pin": "PIN code used for panel actions when required."
         },
-        "description": "Select the discovered USB/Serial port where your ELK-M1 is connected. The baud rate is detected automatically. {discovered} port(s) found.",
+        "description": "Select one serial port. Only the selected port is opened and sent the Elk-M1 version request while its baud is detected.",
         "title": "Connect via USB / Serial"
       },
-      "usb_confirm": {
-        "description": "An Elk-M1 was found responding on {port}. Add it now?",
-        "title": "Elk-M1 discovered via USB"
+      "discovery_confirm": {
+        "description": "An M1XEP was discovered at {host} with identity {mac_address}. Continue to credential and protocol verification?",
+        "title": "Confirm discovered Elk-M1"
+      },
+      "elkm1_options": {
+        "data": {
+          "poll_interval": "Fallback polling interval (seconds)"
+        },
+        "description": "The panel was verified. Choose the fallback polling interval used when an expected push update is unavailable.",
+        "title": "Elk-M1 options"
       },
       "reconfigure": {
         "data": {
@@ -84,9 +97,9 @@
       },
       "user": {
         "data": {
-          "device": "[%key:common::config_flow::data::device%]"
+          "connection_type": "Connection method"
         },
-        "description": "Choose a discovered system, select 'Manual Network Entry', or use 'USB / Serial Port Discovery'.",
+        "description": "Choose an M1XEP network connection or a direct serial/USB connection.",
         "title": "Connect to Elk-M1 Control"
       }
     }

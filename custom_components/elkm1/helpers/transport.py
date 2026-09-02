@@ -1,32 +1,11 @@
-"""Hybrid transport layer for Elk-M1: native baud-aware connect, elkm1-lib protocol.
-
-Architecture decision (see PROJECT_MAP.md): elkm1_lib's message encode/decode
-(message.py) and Elk-class orchestration (subsystem objects, handler
-dispatch) are reused as-is rather than reimplemented from the protocol
-manual by hand. Only the transport-opening half of elkm1_lib.connection.
-Connection.connect() is replaced, so this integration controls baud
-handling for serial ports while everything downstream of "we have a
-reader/writer pair" - checksum, framing, the write queue, reconnect-on-
-heartbeat-timeout - stays exactly elkm1-lib's own, already-correct code.
-
-Why monkeypatching instead of subclassing: elkm1_lib.Elk.__init__()
-unconditionally does `self._connection = Connection(config["url"],
-notifier)` and immediately hands that instance to every subsystem object
-(Areas, Zones, Outputs, ...), each of which stores its own reference at
-construction time. There is no constructor seam to inject a Connection
-subclass instance in its place - by the time Elk() returns, a dozen
-objects already hold a reference to the *original* Connection. Subclassing
-would therefore require also overriding Elk.__init__, which is a much
-larger and more fragile diff against a pinned external dependency than
-replacing one bound method on the Connection class itself. The patch is
-applied once, idempotently, at import time.
-"""
+"""Entry-owned transport lifecycle for Elk-M1 connections."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from asyncio import timeout as asyncio_timeout
+from contextlib import suppress
+from types import MethodType
 from typing import Any
 
 from elkm1_lib import Elk
@@ -37,99 +16,256 @@ from .baud_probe import BaudProbeError, open_probed_serial, probe_baud
 
 _LOGGER = logging.getLogger(__name__)
 
-_PATCHED_ATTR = "_elkm1ha_baud_patched"
+INITIAL_RETRY_DELAY = 1
+MAX_RETRY_DELAY = 60
 
 
 class ConnectionTimeoutError(Exception):
-    """Raised when a network/serial validation connection never confirms a live panel."""
+    """A validation connection never received an ELK response."""
 
 
 class InvalidAuthError(Exception):
-    """Raised when a secure network connection is rejected for bad credentials."""
+    """A secure M1XEP rejected the supplied credentials."""
 
 
-async def _connect_with_baud_probe(self: Connection) -> None:
-    """Drop-in replacement for elkm1_lib.connection.Connection.connect().
+async def _entry_connect(connection: Connection) -> None:
+    """Own one entry's open, stream supervision, and reconnect loop."""
+    _LOGGER.info("Connecting to ElkM1 at %s", connection._url)
+    scheme, dest, param, ssl_context = parse_url(connection._url)
+    cached_baud: int | None = getattr(connection, "_elkm1ha_cached_baud", None)
 
-    Identical to elkm1-lib 2.2.15's implementation except that a serial://
-    URL's baud rate is resolved via probe_baud() instead of assuming
-    parse_url()'s single fixed value (which parse_url only returns because
-    the serial:// URL scheme technically allows a `:baud` suffix that
-    nothing in this integration's config flow ever sets). Network
-    connections are untouched.
-    """
-    _LOGGER.info("Connecting to ElkM1 at %s", self._url)
-    retry_time = 1
-    scheme, dest, param, ssl_context = parse_url(self._url)
-    cached_baud: int | None = getattr(self, "_elkm1ha_cached_baud", None)
-
-    while not self._writer:
+    while True:
+        retry_delay = int(
+            getattr(connection, "_elkm1ha_retry_delay", INITIAL_RETRY_DELAY)
+        )
         try:
-            async with asyncio_timeout(30):
+            async with asyncio.timeout(30):
                 if scheme == "serial":
-                    # open_probed_serial() leaves the winning attempt's
-                    # connection open and hands it straight back, rather
-                    # than closing the probe and reopening a second time.
-                    baud, reader, self._writer = await open_probed_serial(
+                    baud, reader, connection._writer = await open_probed_serial(
                         dest, cached_baud
                     )
-                    self._elkm1ha_cached_baud = baud  # type: ignore[attr-defined]
+                    connection._elkm1ha_cached_baud = baud  # type: ignore[attr-defined]
                     cached_baud = baud
-                    on_baud_detected = getattr(self, "_elkm1ha_on_baud_detected", None)
-                    if on_baud_detected is not None:
-                        on_baud_detected(baud)
+                    if callback := getattr(
+                        connection, "_elkm1ha_on_baud_detected", None
+                    ):
+                        callback(baud)
                 else:
-                    reader, self._writer = await asyncio.open_connection(
+                    reader, connection._writer = await asyncio.open_connection(
                         host=dest, port=param, ssl=ssl_context
                     )
+        except asyncio.CancelledError:
+            raise
         except (TimeoutError, ValueError, OSError, BaudProbeError) as err:
+            next_delay = min(MAX_RETRY_DELAY, retry_delay * 2)
+            connection._elkm1ha_retry_delay = next_delay  # type: ignore[attr-defined]
+            if callback := getattr(connection, "_elkm1ha_on_failure", None):
+                callback(_failure_category(err), str(err))
             _LOGGER.warning(
-                "Error connecting to ElkM1 (%s). Retrying in %d seconds", err, retry_time
+                "Error connecting to ElkM1 (%s). Retrying in %d seconds",
+                err,
+                retry_delay,
             )
-            await asyncio.sleep(retry_time)
-            retry_time = min(60, retry_time * 2)
+            await asyncio.sleep(retry_delay)
             continue
 
+        stream_tasks = {
+            asyncio.create_task(
+                connection._read_stream(reader), name="elkm1-read-stream"
+            ),
+            asyncio.create_task(
+                connection._write_stream(), name="elkm1-write-stream"
+            ),
+        }
         if scheme != "serial":
-            self._tasks.add(asyncio.create_task(self._heartbeat_timer()))
-        self._tasks.add(asyncio.create_task(self._read_stream(reader)))
-        self._tasks.add(asyncio.create_task(self._write_stream()))
-        self._notifier.notify("connected", {})
+            stream_tasks.add(
+                asyncio.create_task(
+                    _entry_heartbeat(connection), name="elkm1-heartbeat"
+                )
+            )
+        connection._tasks.update(stream_tasks)
+        if callback := getattr(connection, "_elkm1ha_on_transport_connected", None):
+            callback()
+        connection._notifier.notify("connected", {})
+
+        failure: BaseException | None = None
+        try:
+            done, _pending = await asyncio.wait(
+                stream_tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done:
+                if not task.cancelled() and (task_error := task.exception()) is not None:
+                    failure = task_error
+                    break
+            if failure is None:
+                failure = ConnectionError("ELK transport stream closed")
+        except asyncio.CancelledError:
+            await _async_close_transport(connection, stream_tasks)
+            raise
+
+        await _async_close_transport(connection, stream_tasks)
+        connection._notifier.notify("disconnected", {})
+        if callback := getattr(connection, "_elkm1ha_on_failure", None):
+            callback(_failure_category(failure), str(failure))
+        retry_delay = int(
+            getattr(connection, "_elkm1ha_retry_delay", INITIAL_RETRY_DELAY)
+        )
+        connection._elkm1ha_retry_delay = min(  # type: ignore[attr-defined]
+            MAX_RETRY_DELAY, retry_delay * 2
+        )
+        await asyncio.sleep(retry_delay)
 
 
-def ensure_baud_probe_patch_applied() -> None:
-    """Patch Connection.connect once per process. Safe to call repeatedly."""
-    if getattr(Connection, _PATCHED_ATTR, False):
-        return
-    Connection.connect = _connect_with_baud_probe  # type: ignore[method-assign]
-    setattr(Connection, _PATCHED_ATTR, True)
+async def _entry_heartbeat(connection: Connection) -> None:
+    """Supervise heartbeat without allowing a child task to reconnect."""
+    while connection._writer:
+        connection._heartbeat_event.clear()
+        try:
+            async with asyncio.timeout(120):
+                await connection._heartbeat_event.wait()
+        except TimeoutError:
+            if connection._paused:
+                continue
+            raise ConnectionError("ELK heartbeat timed out") from None
 
 
-def attach_baud_state(
-    elk: Elk,
-    *,
-    cached_baud: int | None = None,
-    on_baud_detected: Any = None,
+async def _async_close_transport(
+    connection: Connection, tasks: set[asyncio.Task[Any]]
 ) -> None:
-    """Seed a cached baud rate and/or a detected-baud callback onto elk's connection.
+    """Cancel and await all streams, then close and await the writer."""
+    current = asyncio.current_task()
+    for task in tasks:
+        if task is not current and not task.done():
+            task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    connection._tasks.difference_update(tasks)
 
-    Must be called after Elk(config) construction and before elk.connect().
-    """
-    ensure_baud_probe_patch_applied()
-    connection = elk.connection
-    if cached_baud is not None:
-        connection._elkm1ha_cached_baud = cached_baud  # type: ignore[attr-defined]
-    if on_baud_detected is not None:
-        connection._elkm1ha_on_baud_detected = on_baud_detected  # type: ignore[attr-defined]
+    writer = connection._writer
+    connection._writer = None
+    if writer is not None:
+        writer.close()
+        wait_closed = getattr(writer, "wait_closed", None)
+        if wait_closed is not None:
+            with suppress(OSError, ConnectionError):
+                await wait_closed()
+
+
+def _failure_category(err: BaseException) -> str:
+    """Return a stable diagnostics category for a transport failure."""
+    if isinstance(err, BaudProbeError):
+        return "serial_probe"
+    if isinstance(err, TimeoutError):
+        return "timeout"
+    if isinstance(err, OSError):
+        return "transport"
+    return "configuration"
+
+
+class ElkConnectionManager:
+    """Own exactly one connection task and all transport shutdown work."""
+
+    def __init__(
+        self,
+        elk: Elk,
+        *,
+        cached_baud: int | None = None,
+        on_baud_detected: Any = None,
+    ) -> None:
+        self.elk = elk
+        self.connection = elk.connection
+        self._connect_task: asyncio.Task[None] | None = None
+        self._ever_connected = False
+        self.transport_state = "stopped"
+        self.login_state = "unknown"
+        self.reconnect_count = 0
+        self.last_failure_category: str | None = None
+        self.last_failure: str | None = None
+        self.detected_baud = cached_baud
+
+        self.connection.connect = MethodType(  # type: ignore[method-assign]
+            _entry_connect, self.connection
+        )
+        self.connection._elkm1ha_retry_delay = INITIAL_RETRY_DELAY  # type: ignore[attr-defined]
+        self.connection._elkm1ha_on_failure = self._on_failure  # type: ignore[attr-defined]
+        self.connection._elkm1ha_on_transport_connected = (  # type: ignore[attr-defined]
+            self._on_transport_connected
+        )
+        if cached_baud is not None:
+            self.connection._elkm1ha_cached_baud = cached_baud  # type: ignore[attr-defined]
+        self.connection._elkm1ha_on_baud_detected = (  # type: ignore[attr-defined]
+            self._wrap_baud_callback(on_baud_detected)
+        )
+
+    def _wrap_baud_callback(self, callback: Any) -> Any:
+        def _detected(baud: int) -> None:
+            self.detected_baud = baud
+            if callback is not None:
+                callback(baud)
+
+        return _detected
+
+    def _on_transport_connected(self) -> None:
+        if self._ever_connected:
+            self.reconnect_count += 1
+        self._ever_connected = True
+        self.transport_state = "connected"
+
+    def _on_failure(self, category: str, message: str) -> None:
+        self.transport_state = "reconnecting"
+        self.last_failure_category = category
+        self.last_failure = message
+
+    def mark_disconnected(self) -> None:
+        """Record a library disconnect notification."""
+        if self.transport_state != "stopped":
+            self.transport_state = "reconnecting"
+
+    def mark_login(self, succeeded: bool) -> None:
+        """Record login state and reset backoff only after accepted login."""
+        self.login_state = "authenticated" if succeeded else "rejected"
+        if succeeded:
+            self.connection._elkm1ha_retry_delay = INITIAL_RETRY_DELAY  # type: ignore[attr-defined]
+            self.last_failure_category = None
+            self.last_failure = None
+        else:
+            self.last_failure_category = "authentication"
+            self.last_failure = "M1XEP rejected the configured credentials"
+
+    def start(self) -> asyncio.Task[None]:
+        """Start or return the owned connection task."""
+        if self._connect_task is None or self._connect_task.done():
+            self.transport_state = "connecting"
+            self._connect_task = asyncio.create_task(
+                self.connection.connect(), name="elkm1-connect"
+            )
+        return self._connect_task
+
+    async def async_stop(self) -> None:
+        """Cancel the owned task, disconnect, and await all stream cleanup."""
+        self.transport_state = "stopped"
+        connect_task = self._connect_task
+        self._connect_task = None
+        if connect_task is not None and not connect_task.done():
+            connect_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await connect_task
+
+        connection_tasks = set(self.connection._tasks)
+        if self.connection._writer is not None or connection_tasks:
+            writer = self.connection._writer
+            self.connection.disconnect()
+            if connection_tasks:
+                await asyncio.gather(*connection_tasks, return_exceptions=True)
+            if writer is not None:
+                wait_closed = getattr(writer, "wait_closed", None)
+                if wait_closed is not None:
+                    with suppress(OSError, ConnectionError):
+                        await wait_closed()
 
 
 async def validate_serial_port(port: str, cached_baud: int | None = None) -> int:
-    """Confirm an Elk-M1 panel responds on `port` and return its baud rate.
-
-    Thin wrapper around probe_baud() shared by config_flow's serial setup
-    step and helpers/usb_discovery.py's candidate-port probing, so there is
-    one probing implementation, not two.
-    """
+    """Verify a selected serial port and return its detected ELK baud."""
     return await probe_baud(port, cached_baud)
 
 
@@ -139,24 +275,15 @@ async def validate_network_connection(
     password: str | None = None,
     timeout: float = 10.0,
 ) -> None:
-    """Confirm a live Elk-M1 panel over a network URL, raising on failure.
-
-    Uses a short-lived real elkm1_lib.Elk instance rather than a hand-rolled
-    socket so secure schemes (elks://, elksv1_2://) genuinely exercise
-    elkm1-lib's TLS context and credential handshake (Connection.connect()
-    picks up parse_url()'s ssl_context; Elk._connected() sends userid/
-    password for secure schemes) - the socket-level validation this
-    replaced skipped both entirely and could not have actually verified a
-    secure connection.
-    """
-    ensure_baud_probe_patch_applied()
-    config: dict[str, Any] = {"url": url}
+    """Verify network transport, ELK identity response, and secure login."""
+    config: dict[str, Any] = {"url": url, "element_list": ["panel"]}
     if userid is not None:
         config["userid"] = userid
     if password is not None:
         config["password"] = password
 
     elk = Elk(config)
+    manager = ElkConnectionManager(elk)
     got_version = asyncio.Event()
     login_failed = asyncio.Event()
 
@@ -164,31 +291,35 @@ async def validate_network_connection(
         got_version.set()
 
     def _on_login(succeeded: bool) -> None:
+        manager.mark_login(succeeded)
         if not succeeded:
             login_failed.set()
 
     elk.add_handler("VN", _on_vn)
     elk.add_handler("login", _on_login)
-
+    version_task = asyncio.create_task(
+        got_version.wait(), name="elkm1-validate-version"
+    )
+    auth_task = asyncio.create_task(
+        login_failed.wait(), name="elkm1-validate-login"
+    )
     try:
-        elk.connect()
-        vn_task = asyncio.ensure_future(got_version.wait())
-        login_failed_task = asyncio.ensure_future(login_failed.wait())
+        manager.start()
         try:
-            async with asyncio_timeout(timeout):
+            async with asyncio.timeout(timeout):
                 await asyncio.wait(
-                    (vn_task, login_failed_task), return_when=asyncio.FIRST_COMPLETED
+                    (version_task, auth_task),
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
         except TimeoutError as exc:
-            raise ConnectionTimeoutError(f"No response from {url}") from exc
-        finally:
-            for task in (vn_task, login_failed_task):
-                if not task.done():
-                    task.cancel()
-
+            raise ConnectionTimeoutError(f"No ELK response from {url}") from exc
         if login_failed.is_set():
             raise InvalidAuthError(f"Authentication rejected by {url}")
         if not got_version.is_set():
-            raise ConnectionTimeoutError(f"No response from {url}")
+            raise ConnectionTimeoutError(f"No ELK response from {url}")
     finally:
-        elk.disconnect()
+        for task in (version_task, auth_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(version_task, auth_task, return_exceptions=True)
+        await manager.async_stop()

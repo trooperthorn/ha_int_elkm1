@@ -89,7 +89,7 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service(
         SERVICE_SENSOR_COUNTER_SET,
-        COUNTER_SET_SERVICE_SCHEMA,
+        vol.Schema(COUNTER_SET_SERVICE_SCHEMA),
         "async_counter_set",
     )
 
@@ -127,7 +127,7 @@ class ElkCounter(ElkEntity, NumberEntity):
     @override
     def native_value(self) -> float | None:
         obj = self._get_obj()
-        return obj.value if obj else None
+        return float(obj.value) if obj else None
 
     @override
     async def async_set_native_value(self, value: float) -> None:
@@ -180,7 +180,7 @@ class ElkCustomValue(ElkEntity, NumberEntity):
         obj = self._get_obj()
         if not obj or isinstance(obj.value, tuple):
             return None
-        return obj.value
+        return float(obj.value)
 
     @override
     async def async_set_native_value(self, value: float) -> None:

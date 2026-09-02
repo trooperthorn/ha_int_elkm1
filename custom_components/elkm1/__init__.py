@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_PREFIX, Platform
+from homeassistant.const import CONF_HOST, CONF_PREFIX, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers import device_registry as dr
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.util.network import is_ip_address
 
 from .alarmo_integration import async_setup_alarmo_auto_config
@@ -18,10 +18,14 @@ from .const import (
     CONF_AUTO_CONFIGURE,
     CONF_BAUD_RATE,
     CONF_CONNECTION_TYPE,
+    CONF_DEVICE_ID,
+    CONF_MAC_ADDRESS,
     CONF_POLL_INTERVAL,
+    CONF_SERIAL_PORT,
     CONNECTION_NETWORK,
     CONNECTION_SERIAL,
     DEFAULT_POLL_INTERVAL,
+    DOMAIN,
 )
 from .coordinator import ElkDataUpdateCoordinator
 from .discovery import (
@@ -39,6 +43,8 @@ else:
     ElkM1ConfigEntry = ConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS = [
     Platform.ALARM_CONTROL_PANEL,
@@ -65,16 +71,48 @@ async def async_setup(hass: HomeAssistant, _hass_config: dict[str, Any]) -> bool
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate legacy entries to the explicit transport and identity schema."""
+    if entry.version > 2:
+        return False
+
+    data = dict(entry.data)
+    serial_port = data.get(CONF_SERIAL_PORT)
+    unique_id = entry.unique_id
+    if serial_port or str(data.get(CONF_HOST, "")).startswith("serial://"):
+        if not serial_port:
+            serial_port = hostname_from_url(str(data[CONF_HOST]))
+            data[CONF_SERIAL_PORT] = serial_port
+            data.pop(CONF_HOST, None)
+        data[CONF_CONNECTION_TYPE] = CONNECTION_SERIAL
+        device_id = str(data.get(CONF_DEVICE_ID) or f"serial:{serial_port}")
+        data[CONF_DEVICE_ID] = device_id
+        unique_id = device_id
+    else:
+        data[CONF_CONNECTION_TYPE] = CONNECTION_NETWORK
+        if unique_id and ":" in unique_id:
+            data[CONF_MAC_ADDRESS] = unique_id
+
+    hass.config_entries.async_update_entry(
+        entry,
+        data=data,
+        unique_id=unique_id,
+        version=2,
+        minor_version=1,
+    )
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ElkM1ConfigEntry) -> bool:
     """Set up Elk-M1 Control from a config entry."""
     conf = dict(entry.data)
 
-    serial_port = conf.get("serial_port")
+    serial_port = conf.get(CONF_SERIAL_PORT)
     if serial_port:
         connection_url = f"serial://{serial_port}"
         conf[CONF_CONNECTION_TYPE] = CONNECTION_SERIAL
     else:
-        connection_url = conf.get("host", "")
+        connection_url = conf.get(CONF_HOST, "")
         conf[CONF_CONNECTION_TYPE] = (
             CONNECTION_SERIAL
             if connection_url.startswith("serial://")
@@ -87,9 +125,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElkM1ConfigEntry) -> boo
     if (
         (not entry.unique_id or ":" not in entry.unique_id)
         and is_ip_address(host)
-        and (device := await async_discover_device(hass, entry, "network", 0))
+        and (device := await async_discover_device(hass, host))
     ):
-        await async_update_entry_from_discovery(hass, entry, device)
+        async_update_entry_from_discovery(hass, entry, device)
 
     def _on_baud_detected(baud: int) -> None:
         """Persist a newly detected baud rate so reconnects try it first."""
@@ -106,7 +144,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElkM1ConfigEntry) -> boo
 
     try:
         await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryAuthFailed:
+        raise
     except Exception as err:
+        await coordinator.async_disconnect()
         raise ConfigEntryNotReady(
             f"Timed out or failed connecting to {connection_url}"
         ) from err
@@ -161,7 +202,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ElkM1ConfigEntry) -> bo
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     coordinator = entry.runtime_data.coordinator
-    if coordinator:
+    if unload_ok and coordinator:
+        await coordinator.async_shutdown()
         await coordinator.async_disconnect()
 
     return unload_ok

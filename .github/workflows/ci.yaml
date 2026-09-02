@@ -2,7 +2,7 @@ name: CI Configuration
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, "codex/**" ]
   pull_request:
     branches: [ main ]
 
@@ -23,8 +23,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Verify installed support matrix
+        run: python -c "from importlib.metadata import version; import sys; assert version('homeassistant') == '2026.8.3'; assert sys.version_info[:2] == (3, 14)"
+
       - name: Run Ruff Linter
-        run: ruff check custom_components/elkm1 --ignore I001
+        run: ruff check .
 
       - name: Run Mypy Type Checker
-        run: mypy custom_components/elkm1
+        run: mypy --config-file mypy.ini custom_components/elkm1

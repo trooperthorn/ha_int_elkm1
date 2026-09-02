@@ -14,16 +14,13 @@ rules:
       repo - not something this codebase can complete on its own.
   common-modules: done
   config-flow-test-coverage:
-    status: todo
+    status: done
     comment: |
-      tests/test_config_flow.py now has 13 real, passing tests (user,
-      manual network, serial, options, reconfigure network/serial, reauth
-      network/serial-unsupported, and their error paths), up from one
-      broken test patching a class (ElkM1Connection) that hasn't existed
-      since the hybrid transport rework. config_flow.py measures at 65%
-      line coverage - real but not complete: discovery-driven steps
-      (dhcp/integration_discovery/discovered_connection/usb/usb_confirm)
-      aren't covered yet.
+      tests/test_config_flow.py covers manual network, selected-port serial,
+      DHCP/directed discovery, secure auth versus timeout, duplicate identity,
+      network/serial reconfigure mismatch behavior, reauth, options, and the
+      explicitly supported multi-panel policy. Generic USB discovery is not
+      retained because bridge VID/PID metadata is not ELK-product-specific.
   config-flow: done
   dependency-transparency:
     status: done
@@ -115,22 +112,12 @@ rules:
   test-coverage:
     status: todo
     comment: |
-      68 real, passing tests across 8 files (config flow, coordinator
-      login/auth/arm-command/bypass dispatch, the alarm_control_panel
-      action-exceptions fix, the area-openings binary_sensor and its
-      device_class corrections, switch bypass idempotency, number counter
-      services, domain-level services, and setup/unload/options-reload),
-      up from two near-placeholder files with one failing test.
-      `pytest --cov=custom_components.elkm1` measures 64% line coverage
-      (2210 statements, 803 missed) - real, verified progress, not yet
-      the >90% this rule wants. Weakest spots: coordinator.py's push
-      broadcast handlers (54%), several read-only platforms' state/
-      attribute properties, helpers/baud_probe.py and
-      helpers/transport.py (the baud sweep/probe logic was verified
-      extensively by hand against a real PTY during Milestone 1, but
-      those runs weren't committed as repeatable tests), and
-      helpers/usb_discovery.py's actual port enumeration (18%, hard to
-      test meaningfully without real hardware or a pyserial mock).
+      The suite now includes the required configuration/identity matrix plus
+      migration, diagnostics redaction, entry-owned transport cancellation,
+      coordinator auth, setup/unload, and platform/service behavior. The
+      quality-scale >90% line-coverage threshold has not yet been established;
+      live hardware qualification is tracked separately in
+      docs/live_qualification.md.
 
   # Gold
   devices:
@@ -148,11 +135,10 @@ rules:
   discovery:
     status: done
     comment: |
-      DHCP discovery (network) and USB discovery (manifest.json usb key,
-      async_step_usb) for serial adapters. No zeroconf/mDNS key: the
-      M1XEP's discovery beacon is a proprietary UDP broadcast (handled by
-      discovery.py), not mDNS, so a zeroconf manifest entry would be
-      inaccurate.
+      DHCP plus upstream elkm1_lib UDP broadcast/directed discovery cover
+      network XEP interfaces. Serial remains an explicit SerialPortSelector
+      path. Generic FTDI/PL2303/CP2102/CH340 matches were removed because they
+      identify bridge chips, not ELK products.
   docs-data-update:
     status: done
     comment: README's Architecture section explains the push-first/poll-fallback data flow.
@@ -209,7 +195,7 @@ rules:
       going through icons.json, which doesn't exist yet.
   reconfiguration-flow:
     status: done
-    comment: async_step_reconfigure (network) and async_step_reconfigure_serial, both via async_update_reload_and_abort.
+    comment: async_step_reconfigure (network) and async_step_reconfigure_serial, both via async_update_and_abort.
   repair-issues:
     status: todo
     comment: |
@@ -226,25 +212,16 @@ rules:
     status: done
     comment: |
       elkm1_lib's message encode/decode and Elk/subsystem orchestration
-      are used as-is; the one synchronous coupling point
-      (Connection.connect()'s transport open) is replaced by native
-      asyncio in helpers/transport.py via a monkeypatch of
-      Connection.connect at the class level.
+      are used as-is. Each entry binds a native asyncio transport supervisor
+      to its own Connection instance; no process-global class monkeypatch is
+      performed, and unload awaits all owned stream/reconnect cleanup.
   inject-websession:
     status: exempt
     comment: No HTTP requests - this integration only speaks the Elk-M1 ASCII protocol over serial/TCP.
   strict-typing:
-    status: todo
+    status: done
     comment: |
-      `mypy --config-file mypy.ini` (now strict = true, scoped to
-      custom_components/elkm1) reports 42 real errors across 10 files as
-      of this check (coordinator.py 15, climate.py 7, config_flow.py 6,
-      light.py 3, alarm_control_panel.py 3, switch.py/number.py/
-      device_action.py 2 each, services.py/discovery.py 1 each). The
-      largest category (coordinator.py) is elkm1_lib's Elements[T]
-      collections being typed as the generic Element base class rather
-      than the real Zone/Area/Output/etc. subclasses the coordinator
-      actually reads subclass-only attributes off - an upstream typing
-      gap in elkm1_lib, not a runtime bug (verified via real elkm1_lib
-      object behavioral tests throughout development). Working through
-      the rest is tracked as follow-up.
+      CI runs strict mypy against the whole integration with zero errors.
+      Targeted attr-defined suppressions document the small set of
+      subclass-only ELK fields that elkm1_lib exposes as Element in its stubs;
+      strict checks remain enabled globally.

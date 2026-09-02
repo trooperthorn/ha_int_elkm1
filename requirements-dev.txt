@@ -2,14 +2,15 @@
 ruff==0.16.3
 
 # Type Checking
-mypy>=1.8.0
+mypy==2.3.1
 
 # Home Assistant Core & Testing
-homeassistant==2026.8.0
-pytest>=8.0.0
-pytest-asyncio>=0.23.5
-pytest-homeassistant-custom-component>=0.13.111
+homeassistant==2026.8.3
+pytest==9.0.3
+pytest-asyncio==1.4.0
+pytest-homeassistant-custom-component==0.13.357
 
 # Integration Dependencies
-pyserial>=3.5
-pyserial-asyncio>=0.6
+pyserial==3.5
+elkm1-lib==2.2.15
+pyserial-asyncio-fast==0.16
