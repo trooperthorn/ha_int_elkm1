@@ -56,9 +56,7 @@ def test_every_documented_full_alarm_state_maps_to_triggered(alarm_state):
 
 def test_panic_trigger_feature_is_not_advertised():
     """AP is M1-to-XEP only; the third-party protocol has no panic command."""
-    assert not (
-        ElkAlarmControlPanel._attr_supported_features & AlarmControlPanelEntityFeature.TRIGGER
-    )
+    assert not (_panel(AreaData()).supported_features & AlarmControlPanelEntityFeature.TRIGGER)
 
 
 async def test_failed_disarm_raises_homeassistant_error_not_silent_log():
