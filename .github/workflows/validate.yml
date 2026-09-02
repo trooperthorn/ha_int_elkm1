@@ -24,4 +24,8 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          # HACS reads license metadata from the repository's default branch,
+          # not the checked-out feature branch. Validate it normally on main;
+          # branch runs still validate the other repository and integration gates.
+          ignore: ${{ github.ref != 'refs/heads/main' && 'license' || '' }}
 
