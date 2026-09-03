@@ -13,7 +13,9 @@ from elkm1_lib.notify import Notifier
 
 from custom_components.elkm1.helpers.baud_probe import STANDARD_BAUD_RATES, _try_baud
 from custom_components.elkm1.helpers.transport import (
+    DEFAULT_HEARTBEAT_TIMEOUT,
     ElkConnectionManager,
+    _entry_heartbeat,
     _entry_read_stream,
 )
 
@@ -45,6 +47,43 @@ class _Writer:
 
     def close(self) -> None:
         self.closed = True
+
+
+def test_manager_defaults_to_the_standard_heartbeat_timeout() -> None:
+    manager = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2101"}))
+
+    assert manager.connection._elkm1ha_heartbeat_timeout == DEFAULT_HEARTBEAT_TIMEOUT
+
+
+def test_manager_accepts_a_scaled_heartbeat_timeout() -> None:
+    """A poll interval longer than the default heartbeat window must not force reconnects.
+
+    Regression test: the network heartbeat only proves *some* traffic is
+    arriving. With a fixed 120s window and no push broadcasts, a configured
+    poll interval past 120s (allowed up to MAX_POLL_INTERVAL=300) would
+    starve the heartbeat between polls and force a reconnect that has
+    nothing to do with real connection health.
+    """
+    manager = ElkConnectionManager(
+        Elk({"url": "elk://127.0.0.1:2101"}), heartbeat_timeout=250.0
+    )
+
+    assert manager.connection._elkm1ha_heartbeat_timeout == 250.0
+
+
+async def test_entry_heartbeat_uses_the_configured_timeout() -> None:
+    notifier = Notifier()
+    connection = Connection("elk://test", notifier)
+    connection._writer = MagicMock()
+    connection._elkm1ha_heartbeat_timeout = 250.0
+
+    with patch("custom_components.elkm1.helpers.transport.asyncio.timeout") as mock_timeout:
+        mock_timeout.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError)
+        mock_timeout.return_value.__aexit__ = AsyncMock(return_value=False)
+        with pytest.raises(asyncio.CancelledError):
+            await _entry_heartbeat(connection)
+
+    mock_timeout.assert_called_once_with(250.0)
 
 
 def test_manager_does_not_patch_global_connection_class() -> None:

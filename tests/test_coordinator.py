@@ -30,6 +30,7 @@ from custom_components.elkm1.const import (
     CONNECTION_NETWORK,
 )
 from custom_components.elkm1.coordinator import ElkDataUpdateCoordinator
+from custom_components.elkm1.helpers.transport import ElkConnectionManager
 
 
 def _make_coordinator(hass, **data_overrides) -> ElkDataUpdateCoordinator:
@@ -169,6 +170,49 @@ async def test_poll_interval_is_configurable(hass):
         poll_interval=90,
     )
     assert coordinator.update_interval == timedelta(seconds=90)
+
+
+@pytest.mark.parametrize(
+    ("poll_interval", "expected_heartbeat_timeout"),
+    [
+        (30, 120.0),  # default poll interval stays under the default heartbeat window
+        (90, 120.0),  # poll_interval + 30s margin still under the default window
+        (200, 230.0),  # a long poll interval must scale the heartbeat window past it
+        (300, 330.0),  # MAX_POLL_INTERVAL
+    ],
+)
+async def test_async_setup_scales_heartbeat_timeout_with_poll_interval(
+    hass, poll_interval, expected_heartbeat_timeout
+):
+    """A poll interval past the default 120s heartbeat window must not force reconnects.
+
+    Regression test: the network heartbeat only proves *some* traffic is
+    arriving on the wire. With push broadcasts disabled and no traffic
+    between polls, a fixed 120s heartbeat combined with a longer configured
+    poll interval would force a reconnect every ~120s regardless of the
+    interval the user actually chose.
+    """
+    coordinator = ElkDataUpdateCoordinator(
+        hass,
+        {CONF_CONNECTION_TYPE: CONNECTION_NETWORK, CONF_HOST: "elk://1.2.3.4"},
+        poll_interval=poll_interval,
+    )
+    captured: dict[str, float] = {}
+    original_init = ElkConnectionManager.__init__
+
+    def _spy_init(self, elk, **kwargs):
+        captured["heartbeat_timeout"] = kwargs.get("heartbeat_timeout")
+        original_init(self, elk, **kwargs)
+
+    with (
+        patch.object(ElkConnectionManager, "__init__", _spy_init),
+        patch.object(ElkConnectionManager, "start", lambda self: None),
+        patch("custom_components.elkm1.coordinator.CONNECT_TIMEOUT", 0.05),
+        pytest.raises(UpdateFailed),
+    ):
+        await coordinator._async_setup()
+
+    assert captured["heartbeat_timeout"] == expected_heartbeat_timeout
 
 
 @pytest.mark.parametrize(
