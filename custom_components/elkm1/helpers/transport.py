@@ -21,6 +21,21 @@ _LOGGER = logging.getLogger(__name__)
 INITIAL_RETRY_DELAY = 1
 MAX_RETRY_DELAY = 60
 
+# elkm1_lib's own Connection uses this same fixed 120s network heartbeat
+# window (Connection.HEARTBEAT_TIME) - the assumption baked into that
+# constant is that *some* traffic (a push broadcast or a poll's reply)
+# reaches the socket well within it. That held when this integration only
+# supported a fixed 30s poll fallback, but the options flow now allows up
+# to MAX_POLL_INTERVAL (300s) - a panel with Global Programming "Xmit ...
+# Changes" disabled and a poll interval configured past this window would
+# otherwise see this integration force a reconnect roughly every 120
+# seconds regardless of the interval the user actually chose, since no
+# other traffic arrives in the gap between polls. ElkConnectionManager
+# scales the network heartbeat timeout up to stay past the configured poll
+# interval instead.
+DEFAULT_HEARTBEAT_TIMEOUT = 120.0
+HEARTBEAT_MARGIN = 30.0
+
 # elkm1-lib 2.2.15 omits these documented replies from its encoder metadata.
 # Apply them when the message reaches this entry's connection so the panel's
 # small command buffer remains serialized without changing global library state.
@@ -225,10 +240,11 @@ async def _entry_connect(connection: Connection) -> None:
 
 async def _entry_heartbeat(connection: Connection) -> None:
     """Supervise heartbeat without allowing a child task to reconnect."""
+    timeout = getattr(connection, "_elkm1ha_heartbeat_timeout", DEFAULT_HEARTBEAT_TIMEOUT)
     while connection._writer:
         connection._heartbeat_event.clear()
         try:
-            async with asyncio.timeout(120):
+            async with asyncio.timeout(timeout):
                 await connection._heartbeat_event.wait()
         except TimeoutError:
             if connection._paused:
@@ -276,6 +292,7 @@ class ElkConnectionManager:
         *,
         cached_baud: int | None = None,
         on_baud_detected: Any = None,
+        heartbeat_timeout: float = DEFAULT_HEARTBEAT_TIMEOUT,
     ) -> None:
         self.elk = elk
         self.connection = elk.connection
@@ -298,6 +315,7 @@ class ElkConnectionManager:
             _entry_send_raw, self.connection
         )
         self.connection._elkm1ha_retry_delay = INITIAL_RETRY_DELAY  # type: ignore[attr-defined]
+        self.connection._elkm1ha_heartbeat_timeout = heartbeat_timeout  # type: ignore[attr-defined]
         self.connection._elkm1ha_on_failure = self._on_failure  # type: ignore[attr-defined]
         self.connection._elkm1ha_on_transport_connected = (  # type: ignore[attr-defined]
             self._on_transport_connected

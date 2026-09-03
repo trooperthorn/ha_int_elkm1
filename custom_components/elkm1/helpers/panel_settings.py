@@ -78,9 +78,14 @@ async def check_panel_version(coordinator: Any) -> str | None:
             major = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
             minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
             patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+            version_tuple = (major, minor, patch)
 
-            # Minimum: 4.6.8 or 5.2.0+
-            if (major >= 5 and minor >= 2) or (major == 4 and minor >= 6 and patch >= 8):
+            # Minimum: 4.6.8+ on the 4.x branch, or 5.2.0+ on 5.x and later -
+            # a plain version_tuple >= (4, 6, 8) would also accept 5.0.0/5.1.x
+            # (lexicographic comparison stops at the first differing element),
+            # which are below the required 5.2.0 floor, so the 4.x branch is
+            # checked only when major == 4.
+            if version_tuple >= (5, 2, 0) or (major == 4 and version_tuple >= (4, 6, 8)):
                 _LOGGER.info("Panel version %s is supported", version)
                 return str(version)
 

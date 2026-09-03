@@ -36,7 +36,7 @@ from .const import (
     COORDINATOR_UPDATE_INTERVAL,
     EVENT_ELKM1_KEYPAD_KEY_PRESSED,
 )
-from .helpers.transport import ElkConnectionManager
+from .helpers.transport import DEFAULT_HEARTBEAT_TIMEOUT, HEARTBEAT_MARGIN, ElkConnectionManager
 from .helpers.troublestatus import (
     normalize_trouble_status,
     parse_trouble_details,
@@ -195,6 +195,17 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             elk,
             cached_baud=self._config_data.get(CONF_BAUD_RATE),
             on_baud_detected=self._on_baud_detected,
+            # The network heartbeat only proves *some* traffic is arriving;
+            # scale its window past the configured poll interval (up to
+            # MAX_POLL_INTERVAL, well beyond the 120s default) so a panel
+            # with push broadcasts disabled and a long poll interval isn't
+            # forced through a spurious reconnect between polls.
+            heartbeat_timeout=max(
+                DEFAULT_HEARTBEAT_TIMEOUT,
+                self.update_interval.total_seconds() + HEARTBEAT_MARGIN
+                if self.update_interval
+                else DEFAULT_HEARTBEAT_TIMEOUT,
+            ),
         )
         self._connection_manager = manager
 

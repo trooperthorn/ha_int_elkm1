@@ -1,44 +1,145 @@
-name: Create Daily Release
+# Reconciles main into an automatically versioned GitHub Release. A normal
+# merge to main is the release trigger - nobody edits manifest.json's
+# "version" or creates a tag by hand. The release job bumps the manifest
+# version, commits that bump back to main (so the tagged commit's manifest
+# always matches the release, since this integration installs via HACS's
+# standard git-content method rather than a packaged zip), tags it, and
+# publishes the release. The bump commit is marked "[skip release]" so it
+# doesn't trigger another release of itself.
+name: Release
 
 on:
-  workflow_dispatch: # Allows manual triggering from the GitHub Actions UI
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
+  # Decide once, up front, whether this run should do anything at all - every
+  # other job (including the shared lint/test/validate suite) skips when this
+  # is false, so the bot's own bump commit doesn't trigger a second full CI
+  # pass for nothing.
+  guard:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$HEAD_COMMIT_MESSAGE" != *"[skip release]"* ]]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Skipping: this is the release bot's own version-bump commit."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Use the same authoritative checks that gate pull requests. The release
+  # job cannot begin until lint/type-check, the test suite, and hassfest/HACS
+  # validation all pass for this exact commit.
+  lint:
+    needs: guard
+    if: needs.guard.outputs.proceed == 'true'
+    uses: ./.github/workflows/ci.yaml
+    permissions:
+      contents: read
+
+  test:
+    needs: guard
+    if: needs.guard.outputs.proceed == 'true'
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
+  validate:
+    needs: guard
+    if: needs.guard.outputs.proceed == 'true'
+    uses: ./.github/workflows/validate.yml
+    permissions:
+      contents: read
+
   release:
+    needs: [ guard, lint, test, validate ]
+    if: needs.guard.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Required to create tags and releases
-
+      contents: write
     steps:
-      - name: Checkout code
+      - name: Check out main
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Pulls full tag history needed for version math
+          ref: main
+          fetch-depth: 0
 
-      - name: Calculate next vYYYY.MM.DD.XX version
+      - name: Resolve the next calendar version
         id: version
         run: |
-          TODAY=$(date +'%Y.%m.%d')
-          
-          # Find the highest daily revision using sort
-          LATEST_REV=$(git tag -l "v$TODAY.*" | sort -V | tail -n 1 | awk -F. '{print $NF}')
-          
-          if [ -z "$LATEST_REV" ]; then
-            NEXT_REV="01"
+          set -euo pipefail
+          MANIFEST="custom_components/elkm1/manifest.json"
+          CURRENT_VERSION="$(python3 -c "import json; print(json.load(open('$MANIFEST'))['version'])")"
+          TODAY="$(date -u +'%Y.%m.%d')"
+          CURRENT_DATE="${CURRENT_VERSION%.*}"
+          CURRENT_REV="${CURRENT_VERSION##*.}"
+
+          if [ "$CURRENT_DATE" = "$TODAY" ]; then
+            NEXT_REV=$((10#$CURRENT_REV + 1))
           else
-            # Strip leading zero for math, add 1, then pad back to 2 digits
-            NEXT_REV=$(printf "%02d" $((10#$LATEST_REV + 1)))
+            NEXT_REV=1
           fi
-          
-          NEW_TAG="v$TODAY.$NEXT_REV"
-          echo "Calculated new tag: $NEW_TAG"
-          echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          NEW_VERSION="$TODAY.$NEXT_REV"
+
+          # Defensive: the pre-automation tag history on this repo is
+          # irregular (inconsistent padding from a previous script), so
+          # step past any tag that happens to already exist rather than
+          # assuming manifest.json and tags can never disagree.
+          while git rev-parse --verify --quiet "refs/tags/v$NEW_VERSION" >/dev/null; do
+            NEXT_REV=$((NEXT_REV + 1))
+            NEW_VERSION="$TODAY.$NEXT_REV"
+          done
+
+          echo "Resolved version: $NEW_VERSION"
+          printf 'version=%s\n' "$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'tag=v%s\n' "$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Bump manifest.json and commit to main
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/bump_manifest_version.py "$NEW_VERSION"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add custom_components/elkm1/manifest.json
+          git commit -m "chore(release): $NEW_VERSION [skip release]"
+          git push origin HEAD:main
+
+      - name: Tag the release commit
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git tag "$TAG"
+          git push origin "$TAG"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.new_tag }}
-          name: Elk-M1 Release ${{ steps.version.outputs.new_tag }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Elk-M1 Release ${{ steps.version.outputs.tag }}
           generate_release_notes: true
           make_latest: true
         env:
