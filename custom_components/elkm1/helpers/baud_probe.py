@@ -1,17 +1,6 @@
 """Host-side baud-rate auto-detection for Elk-M1 serial connections.
 
-The Elk-M1 RS232 ASCII protocol (manual v1.90, section 2) has no command to
-query or set the panel's own serial baud rate: it is a fixed panel-side
-Global Programming setting with no wire-level handshake and no RTS/CTS flow
-control honored by the panel. "Auto-detect" therefore means trying each
-manufacturer-documented rate on the host side and confirming it against a
-real reply to the `vn` (version request) command, not any protocol-level
-negotiation with the panel.
-
-Message construction/validation reuses elkm1_lib.message's vn_encode()/
-decode() so the checksum and framing logic used here stays identical to
-the one place elkm1-lib already implements it correctly, rather than
-re-deriving the protocol by hand a second time.
+Each documented rate is tried and confirmed by a real `vn` reply; see docs/protocol.md.
 """
 
 from __future__ import annotations
@@ -19,15 +8,14 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import serial_asyncio_fast
+import serialx
 from elkm1_lib.message import decode, vn_encode
 
 from .framing import MAX_FRAME_CHARS, extract_frames
 
 _LOGGER = logging.getLogger(__name__)
 
-# Installation manual Global G34 values, fastest first. The current protocol
-# guide describes 9600-115200; legacy rates remain last for older panels.
+# G34 rates, fastest first; sweep order is fixed. See docs/protocol.md.
 STANDARD_BAUD_RATES: tuple[int, ...] = (
     115200,
     38400,
@@ -40,9 +28,7 @@ STANDARD_BAUD_RATES: tuple[int, ...] = (
     300,
 )
 
-# The protocol manual notes multi-second command latency is normal for some
-# commands; vn is lightweight, but a generous margin avoids false negatives
-# on a slow/busy panel.
+# Generous on purpose: the manual says multi-second command latency is normal.
 PROBE_RESPONSE_TIMEOUT = 2.0
 _DECODE_ERRORS = (ValueError, AttributeError)
 _PROBE_ERRORS = (TimeoutError, asyncio.IncompleteReadError, OSError, ValueError)
@@ -67,17 +53,13 @@ async def _try_baud(
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter] | None:
     """Open `port` at `baud` and send vn; return the open stream pair on a valid reply.
 
-    On failure the port is closed before returning None. On success the
-    connection is left open and handed back to the caller, so a winning
-    probe doesn't have to close and immediately reopen the same serial
-    port a second time before real use - besides the wasted round trip,
-    rapid close/reopen can trip DTR-reset or settling quirks on some
-    USB-serial adapters.
+    On failure the port is closed before returning None; on success the
+    open connection is handed to the caller.
     """
     reader: asyncio.StreamReader | None = None
     writer: asyncio.StreamWriter | None = None
     try:
-        reader, writer = await serial_asyncio_fast.open_serial_connection(url=port, baudrate=baud)
+        reader, writer = await serialx.open_serial_connection(url=port, baudrate=baud)
         writer.write(_build_vn_command())
         await writer.drain()
         read_buffer = ""
@@ -97,8 +79,7 @@ async def _try_baud(
                         result = decode(frame)
                     except _DECODE_ERRORS:
                         continue
-                    # ELK traffic is asynchronous. Ignore valid broadcasts and
-                    # continue until the specifically requested VN arrives.
+                    # Ignore unsolicited broadcasts until the requested vn reply arrives.
                     if result and result[0] == "VN":
                         return reader, writer
     except _PROBE_ERRORS:
@@ -115,11 +96,9 @@ async def open_probed_serial(
 ) -> tuple[int, asyncio.StreamReader, asyncio.StreamWriter]:
     """Detect the panel's baud rate on `port` and return the open connection at it.
 
-    Tries `cached_baud` first (if given) so reconnects lock on immediately
-    instead of re-sweeping every rate, then falls through the standard
-    rates. Raises BaudProbeError if nothing responds. The returned reader/
-    writer are the live connection from the winning attempt - the caller
-    owns closing it.
+    Tries `cached_baud` first (if given), then the standard rates. Raises
+    BaudProbeError if nothing responds. The caller owns closing the
+    returned reader/writer.
     """
     order = list(STANDARD_BAUD_RATES)
     if cached_baud is not None:
@@ -137,12 +116,7 @@ async def open_probed_serial(
 
 
 async def probe_baud(port: str, cached_baud: int | None = None) -> int:
-    """Validation-only variant of open_probed_serial(): detect baud, then close.
-
-    For callers (config-flow validation, USB port discovery) that only need
-    a yes/this-is-an-Elk-panel-at-this-baud answer and don't want to keep
-    the connection open afterward.
-    """
+    """Validation-only variant of open_probed_serial(): detect baud, then close."""
     baud, _reader, writer = await open_probed_serial(port, cached_baud)
     writer.close()
     return baud

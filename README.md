@@ -150,6 +150,9 @@ suite in `tests/`. `custom_components/elkm1/quality_scale.yaml` tracks this
 integration's status against Home Assistant's quality scale honestly - rules are marked
 `todo` with a real reason rather than `done` until actually verified.
 
+Design rationale, protocol facts, and the release path live under `docs/`; start at
+[`docs/README.md`](docs/README.md).
+
 Hardware release qualification is deliberately separate from mocked CI. See
 [`docs/live_qualification.md`](docs/live_qualification.md); a passing config-flow test
 does not prove a live secure/non-secure XEP or serial panel connection.

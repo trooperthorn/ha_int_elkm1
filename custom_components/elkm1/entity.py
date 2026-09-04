@@ -18,12 +18,7 @@ from .coordinator import ElkDataUpdateCoordinator
 def create_elk_system_device_info(
     config_entry: ConfigEntry, sw_version: str | None = None
 ) -> DeviceInfo:
-    """Create standard device info for Elk-M1 system components.
-
-    `sw_version` is the panel firmware version (coordinator.data.panel_version,
-    parsed from the panel's own `vn` reply) once known; entities created
-    before the first successful sync simply omit it.
-    """
+    """Create standard device info for Elk-M1 system components."""
     return DeviceInfo(
         identifiers={(DOMAIN, config_entry.entry_id)},
         name="Elk-M1",
@@ -50,14 +45,10 @@ class ElkEntity(CoordinatorEntity[ElkDataUpdateCoordinator], Entity):
         self.entity_key = entity_key
         self._config_entry = config_entry
 
-        # Every entity currently shares this one panel-wide device; splitting
-        # into per-area/per-keypad devices is tracked as follow-up work once
-        # those become first-class (keypad platform, area-aware naming).
         self._attr_device_info = create_elk_system_device_info(
             config_entry, sw_version=getattr(coordinator.data, "panel_version", None)
         )
 
-        # Unique ID
         self._attr_unique_id = f"{config_entry.entry_id}_{entity_key}"
 
 
@@ -70,18 +61,6 @@ def async_add_dynamic_entities(
 ) -> None:
     """Create entities for already-configured elements, then keep adding
     entities for elements that become configured later.
-
-    elkm1_lib always allocates the hardware-maximum number of Zone/Output/
-    Task/etc. objects, and only marks one `.configured` once the panel's
-    own per-index name-description ("SD") reply for it has arrived - a
-    sequential, one-index-at-a-time exchange (the panel is asked for the
-    next index only after replying to the previous one) that can still be
-    in progress well after platform setup runs, since the coordinator's
-    setup only waits for the panel's login to be confirmed, not for every
-    element's name sync to finish. Without this, entities for
-    later-indexed or slow-syncing elements would simply never appear -
-    `async_setup_entry` only runs once, and elements that were still
-    `configured == False` at that moment are never revisited.
 
     `entity_factory` returns `None` to skip an element entirely (e.g. a
     zone type handled by a different platform); the returned entity's

@@ -5,13 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any, override
 
-import voluptuous as vol
 from elkm1_lib.const import SettingFormat
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import ElkDataUpdateCoordinator
@@ -22,12 +20,6 @@ _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 1
 
-SERVICE_SENSOR_COUNTER_REFRESH = "sensor_counter_refresh"
-SERVICE_SENSOR_COUNTER_SET = "sensor_counter_set"
-
-COUNTER_SET_SERVICE_SCHEMA = {
-    vol.Required("value"): vol.All(vol.Coerce(int), vol.Range(min=0, max=65535)),
-}
 
 
 def _enum_value(obj: Any, default: int = 0) -> int:
@@ -43,24 +35,11 @@ async def async_setup_entry(
 ) -> None:
     """Create the Elk-M1 number platform.
 
-    Only counters/custom values the panel has actually given a real name to
-    (via the `sd` text-description command) are created automatically -
-    elkm1_lib always allocates the hardware maximum (64 counters, 20
-    custom values) regardless of how many are actually in use, and most
-    installations only use a handful. Unnamed slots are left for a future
-    options-flow opt-in rather than flooding every install with mostly-
-    unused entities.
+    Only counters/custom values with a real panel-assigned name are created.
     """
     runtime_data: ElkRuntimeData = config_entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    # elkm1_lib always allocates the hardware maximum (64 counters, 20
-    # custom values) regardless of how many are actually in use, and only
-    # marks one `.configured` once its panel-assigned name has synced - a
-    # sequential, one-index-at-a-time exchange that can still be in
-    # progress after this function returns, so each is added as it
-    # individually becomes configured (and named) rather than only in
-    # this one pass.
     def _counter_entity(counter: Any) -> NumberEntity | None:
         if counter.is_default_name():
             return None
@@ -81,16 +60,6 @@ async def async_setup_entry(
     settings = coordinator.data.settings if coordinator.data else []
     async_add_dynamic_entities(
         config_entry, coordinator, async_add_entities, settings, _custom_value_entity
-    )
-
-    platform = entity_platform.async_get_current_platform()
-    platform.async_register_entity_service(
-        SERVICE_SENSOR_COUNTER_REFRESH, None, "async_counter_refresh"
-    )
-    platform.async_register_entity_service(
-        SERVICE_SENSOR_COUNTER_SET,
-        vol.Schema(COUNTER_SET_SERVICE_SCHEMA),
-        "async_counter_set",
     )
 
 

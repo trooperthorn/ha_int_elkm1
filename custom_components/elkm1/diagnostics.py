@@ -12,7 +12,6 @@ from homeassistant.core import HomeAssistant
 
 from .models import ELKM1Data
 
-# Ensure all security credentials and network locators are wiped from the diagnostic output
 TO_REDACT = {
     CONF_PASSWORD,
     CONF_USERNAME,

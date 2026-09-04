@@ -13,10 +13,8 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfElectricPotential
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ELK_USER_CODE_SERVICE_SCHEMA
 from .coordinator import ElkDataUpdateCoordinator
 from .entity import ElkEntity, async_add_dynamic_entities
 from .helpers.troublestatus import format_troubles
@@ -24,17 +22,13 @@ from .models import ElkRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
-# Zone bypass/trigger are entity services on this platform that write to
-# the panel's single serialized command buffer - must not overlap.
+# The panel has one serialized command buffer with no flow control; writes must not overlap.
 PARALLEL_UPDATES = 1
 
-SERVICE_SENSOR_ZONE_BYPASS = "sensor_zone_bypass"
-SERVICE_SENSOR_ZONE_TRIGGER = "sensor_zone_trigger"
 
 UNDEFINED_TEMPERATURE = -40
 
-# Map raw Elk integer definitions to Device and State Classes
-# 33: Temperature, 34: Analog Zone
+# Zone definitions 33 = temperature, 34 = analog.
 _DEVICE_CLASS_MAP: dict[int, SensorDeviceClass] = {
     33: SensorDeviceClass.TEMPERATURE,
     34: SensorDeviceClass.VOLTAGE,
@@ -57,21 +51,13 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = []
 
-    # 1. Setup Panel Sensor
     entities.append(ElkPanel(coordinator, config_entry))
 
-    # 2. Setup Active Zones Sensor (Summary)
     entities.append(ElkActiveZonesSensor(coordinator, config_entry))
 
     async_add_entities(entities)
 
-    # 3. Setup Zones (Only 33=Temperature and 34=Analog). elkm1_lib always
-    # allocates Max.ZONES.value (208) Zone objects regardless of how many
-    # the panel actually has configured, and only marks one `.configured`
-    # once its panel-assigned name has synced - a sequential, one-index-
-    # at-a-time exchange that can still be in progress after this
-    # function returns, so zones are added as they individually become
-    # configured rather than only in this one pass.
+    # Only definitions 33 (temperature) and 34 (analog) become sensors.
     def _zone_entity(zone: Any) -> SensorEntity | None:
         def_val = 0
         if hasattr(zone, "definition"):
@@ -84,13 +70,6 @@ async def async_setup_entry(
 
     zones = coordinator.data.zones if coordinator.data else []
     async_add_dynamic_entities(config_entry, coordinator, async_add_entities, zones, _zone_entity)
-
-    # Register entity services
-    platform = entity_platform.async_get_current_platform()
-    platform.async_register_entity_service(
-        SERVICE_SENSOR_ZONE_BYPASS, ELK_USER_CODE_SERVICE_SCHEMA, "async_zone_bypass"
-    )
-    platform.async_register_entity_service(SERVICE_SENSOR_ZONE_TRIGGER, None, "async_zone_trigger")
 
 
 class ElkSensor(ElkEntity, SensorEntity):

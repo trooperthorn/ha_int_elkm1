@@ -1,12 +1,4 @@
-"""Tests for alarmo_integration.py's elkm1.alarmo_auto_setup service.
-
-Both bugs covered here were unconditional runtime failures, not
-theoretical: hass.components was removed from Home Assistant core (every
-call path crashed with AttributeError), and the zone-entity filter checked
-for the literal substring "zone" in entity_id, which real installations
-never have (entity_id is derived from the panel-configured zone name, e.g.
-"binary_sensor.front_door").
-"""
+"""Tests for alarmo_integration.py's elkm1.alarmo_auto_setup service."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -43,8 +35,7 @@ async def test_auto_setup_finds_zone_by_unique_id_not_entity_id(hass):
     )
     assert "zone" not in entry.entity_id
 
-    # Should complete without raising - the real assertion is that this
-    # doesn't crash while walking the entity registry to find the zone.
+    # Must not raise while walking the entity registry to find the zone.
     await hass.services.async_call("elkm1", "alarmo_auto_setup", {}, blocking=True)
 
 

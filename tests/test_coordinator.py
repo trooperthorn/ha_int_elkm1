@@ -1,8 +1,5 @@
 """Tests for ElkDataUpdateCoordinator: login/auth handling and command
-dispatch, verified against real elkm1_lib.Elk objects rather than mocks
-wherever practical, since the actual bug classes found during development
-(wrong event name, wrong enum values, wrong command encoding) only show up
-against the real library's behavior.
+dispatch, verified against real elkm1_lib.Elk objects where practical.
 """
 
 from __future__ import annotations
@@ -133,11 +130,7 @@ async def test_async_setup_raises_update_failed_on_timeout(hass):
 
 @pytest.mark.parametrize("_patch_login", [True], indirect=True)
 async def test_sd_reply_notifies_coordinator_listeners(hass, _patch_login):
-    """An "SD" (element name) reply must wake up coordinator.async_add_listener
-    subscribers - this is what lets entity.async_add_dynamic_entities() add a
-    zone/output/etc. entity as soon as it individually becomes `.configured`,
-    rather than only at the platform's single async_setup_entry() call.
-    """
+    """An "SD" (element name) reply must wake up coordinator.async_add_listener subscribers."""
     coordinator = _make_coordinator(hass)
     await coordinator._async_setup()
     assert coordinator._elk is not None
@@ -184,14 +177,7 @@ async def test_poll_interval_is_configurable(hass):
 async def test_async_setup_scales_heartbeat_timeout_with_poll_interval(
     hass, poll_interval, expected_heartbeat_timeout
 ):
-    """A poll interval past the default 120s heartbeat window must not force reconnects.
-
-    Regression test: the network heartbeat only proves *some* traffic is
-    arriving on the wire. With push broadcasts disabled and no traffic
-    between polls, a fixed 120s heartbeat combined with a longer configured
-    poll interval would force a reconnect every ~120s regardless of the
-    interval the user actually chose.
-    """
+    """A poll interval past the default 120s heartbeat window must not force reconnects."""
     coordinator = ElkDataUpdateCoordinator(
         hass,
         {CONF_CONNECTION_TYPE: CONNECTION_NETWORK, CONF_HOST: "elk://1.2.3.4"},

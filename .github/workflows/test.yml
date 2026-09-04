@@ -1,34 +1,39 @@
-name: Test Suite
+# Runs lint, type check, and the pytest suite on every push and pull request.
+# release.yml calls this workflow so the same jobs gate every GitHub Release.
+name: Test
 
 on:
   push:
-    branches: [ main, "codex/**" ]
   pull_request:
-    branches: [ main ]
+  workflow_dispatch:
   workflow_call:
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { ha-version: "2026.8.3", python-version: "3.14" }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt \
-            -c "https://raw.githubusercontent.com/home-assistant/core/${{ matrix.ha-version }}/homeassistant/package_constraints.txt"
+permissions:
+  contents: read
 
-      - name: Verify installed support matrix
-        run: python -c "from importlib.metadata import version; import sys; assert version('homeassistant') == '${{ matrix.ha-version }}'; assert sys.version_info[:2] == (3, 14)"
-            
-      - name: Run Pytest
+jobs:
+  pytest:
+    name: pytest (Python 3.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      # Pins live in requirements-dev.txt so Dependabot can update them. The
+      # harness may declare a beta core; the explicit homeassistant pin in the
+      # same file re-resolves to stable, and the assert proves it.
+      - name: Install the test harness
+        run: pip install -r requirements-dev.txt
+      - name: Verify runtime versions
+        run: python -c "from importlib.metadata import version; import sys; print(version('homeassistant')); assert version('homeassistant') == '2026.9.0'; assert sys.version_info[:2] == (3, 14)"
+      - name: Lint
+        run: ruff check .
+      - name: Type check
+        run: mypy --config-file mypy.ini custom_components/elkm1
+      - name: Run the suite
         run: pytest -ra --strict-markers tests/
+      - name: Validate the release version fields
+        run: python3 scripts/build_release_artifacts.py --validate-only

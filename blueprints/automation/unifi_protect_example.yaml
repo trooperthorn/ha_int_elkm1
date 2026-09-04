@@ -8,7 +8,6 @@ blueprint:
   source_url: https://github.com/trooperthorn/ha_int_elkm1/blob/main/blueprints/automation/unifi_protect_integration.yaml
 
   input:
-    # --- Section 1: Door/Window Zone Recording ---
     door_sensor:
       name: Door / Window Zone Sensor
       description: ELK-M1 binary sensor for the door or window.
@@ -30,7 +29,6 @@ blueprint:
           max: 300
           step: 5
 
-    # --- Section 2: Armed Away Camera Switching ---
     alarm_panel:
       name: ELK-M1 Alarm Panel
       description: The alarm control panel entity.
@@ -46,7 +44,6 @@ blueprint:
             integration: unifi_protect
             domain: switch
 
-    # --- Section 3: Motion Snapshot & Notification ---
     motion_sensor:
       name: Motion Zone Sensor
       description: ELK-M1 motion binary sensor for snapshots and alerts.
@@ -67,7 +64,6 @@ blueprint:
           entity:
             domain: notify
 
-    # --- Section 4: Full Lockdown ---
     siren_switch:
       name: Siren Relay Switch
       description: ELK-M1 output switch wired to your siren.

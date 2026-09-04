@@ -21,24 +21,11 @@ _LOGGER = logging.getLogger(__name__)
 INITIAL_RETRY_DELAY = 1
 MAX_RETRY_DELAY = 60
 
-# elkm1_lib's own Connection uses this same fixed 120s network heartbeat
-# window (Connection.HEARTBEAT_TIME) - the assumption baked into that
-# constant is that *some* traffic (a push broadcast or a poll's reply)
-# reaches the socket well within it. That held when this integration only
-# supported a fixed 30s poll fallback, but the options flow now allows up
-# to MAX_POLL_INTERVAL (300s) - a panel with Global Programming "Xmit ...
-# Changes" disabled and a poll interval configured past this window would
-# otherwise see this integration force a reconnect roughly every 120
-# seconds regardless of the interval the user actually chose, since no
-# other traffic arrives in the gap between polls. ElkConnectionManager
-# scales the network heartbeat timeout up to stay past the configured poll
-# interval instead.
+# The manager scales the heartbeat window past the poll interval; see docs/protocol.md.
 DEFAULT_HEARTBEAT_TIMEOUT = 120.0
 HEARTBEAT_MARGIN = 30.0
 
-# elkm1-lib 2.2.15 omits these documented replies from its encoder metadata.
-# Apply them when the message reaches this entry's connection so the panel's
-# small command buffer remains serialized without changing global library state.
+# elkm1-lib 2.2.15 lacks these reply codes; applied per connection, never to the library globally.
 RESPONSE_COMMAND_OVERRIDES: dict[str, str] = {
     "cw": "CR",
     "rw": "RR",
@@ -154,8 +141,7 @@ async def _entry_read_stream(connection: Connection, reader: asyncio.StreamReade
             if decoded is None:
                 continue
 
-            # Publish supplemental KC data before the library's basic KC callback
-            # so the HA key event can include the complete keypad state.
+            # Publish supplemental KC data before the library's KC callback so the key event is complete.
             if detail := _decode_keypad_detail(line):
                 connection._notifier.notify(detail[0], detail[1])
 

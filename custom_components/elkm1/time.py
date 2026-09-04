@@ -36,11 +36,6 @@ async def async_setup_entry(
     runtime_data: ElkRuntimeData = config_entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    # elkm1_lib only marks a custom value `.configured` once its
-    # panel-assigned name has synced - a sequential, one-index-at-a-time
-    # exchange that can still be in progress after this function returns,
-    # so entities are added as each custom value individually becomes
-    # configured (and named) rather than only in this one pass.
     def _time_of_day_entity(setting: Any) -> TimeEntity | None:
         if (
             setting.is_default_name()

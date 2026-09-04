@@ -37,10 +37,7 @@ def test_device_class_map_entry_exit_is_door():
 
 
 def test_device_class_map_perimeter_instant_is_generic_opening():
-    """Perimeter-instant (3) maps to the generic OPENING class, not WINDOW specifically -
-    the protocol's zone-definition field encodes arming response, not physical sensor
-    type, so claiming WINDOW would overclaim what's actually known.
-    """
+    """Perimeter-instant (3) maps to the generic OPENING class, not WINDOW."""
     assert _DEVICE_CLASS_MAP[3] == "opening"
 
 
@@ -117,12 +114,7 @@ class _FakeCoordinator:
 async def test_zone_binary_sensor_appears_once_configured_after_setup(
     hass, mock_network_entry
 ):
-    """Regression test for the reported bug: a zone not yet `.configured` at
-    async_setup_entry time (the panel's per-index name sync for it hasn't
-    arrived yet - a sequential, one-at-a-time exchange that commonly
-    outlasts coordinator setup) must still get its binary_sensor entity once
-    it does become configured, not be silently skipped forever.
-    """
+    """A zone not yet `.configured` at setup must still get its entity once configured."""
     conn = MagicMock()
     notifier = MagicMock()
     zone = Zone(0, conn, notifier)
@@ -147,9 +139,7 @@ async def test_zone_binary_sensor_appears_once_configured_after_setup(
 
     await async_setup_entry(hass, mock_network_entry, _async_add_entities)
 
-    # First pass: only the fixed trouble/area-openings entities, no zone
-    # sensor yet - this is exactly what the user reported (no per-zone
-    # binary sensors visible).
+    # First pass: fixed trouble/area-openings entities only, no zone sensor yet.
     first_pass_zone_entities = [
         e for e in added_batches[0] if getattr(e, "_zone_index", None) == 0
     ]

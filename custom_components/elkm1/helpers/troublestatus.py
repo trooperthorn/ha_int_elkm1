@@ -1,19 +1,8 @@
-"""Parse the Elk-M1 system trouble status (SS) bitfield.
-
-elkm1_lib's Panel object only exposes a pre-joined display string
-(`system_trouble_status`, built by its own internal `_ss_handler`) - there
-is no structured per-condition data on the Panel object itself to build
-individual binary_sensor entities from. This module parses the same raw,
-character-position-indexed string the panel sends (also passed to any
-extra "SS" handler registered via elk.add_handler, alongside elkm1_lib's
-own) into a plain dict of booleans, one per condition, matching the exact
-index mapping elkm1_lib's Panel._ss_handler uses internally.
-"""
+"""Parse the Elk-M1 system trouble status (SS) bitfield into per-condition booleans."""
 
 from __future__ import annotations
 
-# index -> (machine name, human-readable name). Indices not listed are
-# reserved/unused positions in the protocol's SS reply.
+# index -> (machine name, human name); unlisted indices are reserved in the SS reply.
 TROUBLE_INDEX_NAMES: dict[int, tuple[str, str]] = {
     0: ("ac_fail", "AC Fail"),
     1: ("box_tamper", "Box Tamper"),
@@ -40,8 +29,7 @@ TROUBLE_INDEX_NAMES: dict[int, tuple[str, str]] = {
     33: ("fire", "Fire"),
 }
 
-# These positions encode a one-based zone/device number as ASCII value minus
-# ASCII '0', rather than a Boolean flag (protocol v1.90, sections 4.29.2-4.30).
+# These positions carry a zone/device number (ASCII minus '0'), not a boolean flag.
 TROUBLE_DETAIL_INDICES = frozenset((1, 5, 18, 20, 33))
 
 
@@ -53,10 +41,8 @@ def normalize_trouble_status(raw_status: str) -> str:
 def parse_troubles(raw_status: str) -> dict[str, bool]:
     """Parse a raw SS status string into {machine_name: is_active}.
 
-    `raw_status` is the exact string elkm1_lib's ss_decode() produces
-    (msg[4:-2]) - each character position is '0' when inactive, or any
-    other character when active (some positions encode a zone number
-    instead of a plain flag; this only reports on/off, not which zone).
+    A position is inactive when '0' and active otherwise; zone numbers are
+    not reported.
     """
     raw_status = normalize_trouble_status(raw_status)
     return {

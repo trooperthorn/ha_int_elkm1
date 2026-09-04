@@ -36,7 +36,6 @@ trigger:
     event: start
 
 condition:
-  # Ensure the ELK-M1 panel is fully online and initialized before running setup
   - condition: not
     conditions:
       - condition: state

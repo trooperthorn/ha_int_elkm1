@@ -54,26 +54,14 @@ from .vocabulary import translate_elk_voice
 
 _LOGGER = logging.getLogger(__name__)
 
-# Covers the worst-case baud sweep (9 rates) plus a couple of retry/backoff
-# cycles; the transport itself retries indefinitely, so this is a ceiling on
-# how long first setup waits before surfacing ConfigEntryNotReady, not a
-# retry-count limit.
+# Ceiling on first-setup wait (a full baud sweep plus backoff), not a retry count.
 CONNECT_TIMEOUT = 30.0
 COMMAND_RESPONSE_TIMEOUT = 6.0
 POLL_RESPONSE_TIMEOUT = 12.0
 
 
 class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
-    """Coordinator for Elk-M1 panel state.
-
-    iot_class: local_push. Once the panel's Global Programming "Xmit ...
-    Changes" settings are enabled (see helpers/panel_settings.py), it
-    proactively broadcasts state changes; elkm1_lib decodes those and
-    updates its own typed Zone/Area/Output/etc. objects, which this
-    coordinator observes via per-element callbacks and immediately pushes
-    onward via async_set_updated_data(). `update_interval` below performs a
-    bounded AS/AZ/CS/SS/LW safety-net refresh, not the primary data path.
-    """
+    """Coordinator for Elk-M1 panel state (local_push; `update_interval` is a safety-net poll)."""
 
     def __init__(
         self,
@@ -100,10 +88,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         self._raw_trouble_status = ""
         self._keypad_status: dict[int, dict[str, Any]] = {}
         self.last_command_timeout: str | None = None
-        # Counts of unsolicited broadcasts seen per message type since
-        # connecting, used by helpers/panel_settings.py to empirically infer
-        # whether the panel's Global Programming "Xmit ... Changes" settings
-        # are enabled - the protocol has no direct way to read those bits.
+        # Broadcast counts per message type; panel_settings.py infers the Xmit Changes bits from them.
         self._broadcast_counts: dict[str, int] = dict.fromkeys(
             ("ZC", "CC", "TC", "PC", "KC", "LD"), 0
         )
@@ -158,9 +143,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             if not host:
                 raise ValueError("Host not configured")
             if "://" in host:
-                # config_flow already builds a fully scheme-prefixed URL
-                # (elk://, elks://, elksv1_2://) - use it as-is rather than
-                # re-wrapping it in another scheme.
+                # The config_flow URL is already scheme-prefixed; do not re-wrap it.
                 return str(host)
             port = self._config_data.get(CONF_PORT, 2101)
             return f"elk://{host}:{port}"
@@ -195,11 +178,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             elk,
             cached_baud=self._config_data.get(CONF_BAUD_RATE),
             on_baud_detected=self._on_baud_detected,
-            # The network heartbeat only proves *some* traffic is arriving;
-            # scale its window past the configured poll interval (up to
-            # MAX_POLL_INTERVAL, well beyond the 120s default) so a panel
-            # with push broadcasts disabled and a long poll interval isn't
-            # forced through a spurious reconnect between polls.
+            # The heartbeat window must exceed the poll interval; see docs/protocol.md.
             heartbeat_timeout=max(
                 DEFAULT_HEARTBEAT_TIMEOUT,
                 self.update_interval.total_seconds() + HEARTBEAT_MARGIN
@@ -223,17 +202,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         if elk.panel is not None:
             elk.panel.add_callback(self._handle_voice_message)
 
-        # Wait for the "login" event, not "connected": "connected" only
-        # means the raw socket/serial link opened, not that authentication
-        # (for secure network schemes) succeeded - Elk._connected() sends
-        # credentials *after* the "connected" notify fires, and the M1XEP's
-        # reply ("Login successful" / "Username/Password not found") is what
-        # elkm1_lib decodes into the "login" event. For schemes with no auth
-        # (elk://, serial://) the same event still fires, just as soon as
-        # the panel's first `vn` sync reply arrives - so waiting on "login"
-        # uniformly both proves the panel is actually responding (stronger
-        # than a bare socket-open) and correctly distinguishes real auth
-        # failure from a generic connect timeout.
+        # Wait for "login", not "connected": only login proves the panel replied. See docs/design.md.
         login_succeeded_event = asyncio.Event()
         login_failed_event = asyncio.Event()
 
@@ -397,14 +366,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         )
 
     def _handle_zone_definitions(self, zone_definitions: list[Any]) -> None:
-        """Request voltage for analog zones once definitions are known.
-
-        Zones.sync() requests zone status/definitions/partitions but never
-        requests voltage (zv) - Zone.get_voltage() has to be called
-        explicitly per zone. Rather than blast all 208 possible zones, only
-        ask for it on zones the panel has actually defined as analog
-        (definition == ZoneType.ANALOG_ZONE == 34).
-        """
+        """Request voltage (zv) for analog zones once definitions are known."""
         if not self._elk:
             return
         for zone_index, definition in enumerate(zone_definitions):
@@ -414,29 +376,11 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     def _handle_description_sync(
         self, desc_type: int, unit: int, desc: str, show_on_keypad: bool
     ) -> None:
-        """Notify listeners as each element's panel-assigned name arrives.
-
-        elkm1_lib only marks an element `.configured` once its name
-        ("SD") reply has been processed, and names sync sequentially, one
-        index at a time - a 208-zone panel's zone names alone can still be
-        arriving well after this coordinator's setup already returned
-        (login only proves the panel is responding, not that every
-        element's name sync has finished). Platforms use
-        entity.async_add_dynamic_entities(), which listens here via
-        coordinator.async_add_listener(), to add entities for elements as
-        they individually become configured rather than only once, at
-        their platform's single async_setup_entry() call.
-        """
+        """Notify listeners as each element's panel-assigned name arrives."""
         self.async_update_listeners()
 
     def _handle_trouble_status(self, system_trouble_status: str) -> None:
-        """Store the raw SS trouble string and push an updated snapshot.
-
-        Registered alongside elkm1_lib's own Panel._ss_handler (Notifier
-        supports multiple handlers per message type) so we get the raw,
-        per-condition string directly rather than Panel's already-joined
-        display string, which loses which individual conditions are active.
-        """
+        """Store the raw SS trouble string and push an updated snapshot."""
         self._raw_trouble_status = normalize_trouble_status(system_trouble_status)
         self.async_set_updated_data(self._build_normalized_data())
 
@@ -469,10 +413,6 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         settings = list(self._elk.settings)
         keypads = list(self._elk.keypads)
 
-        # elkm1_lib always allocates Max.AREAS.value (8) Area objects
-        # regardless of how many the panel actually has configured; treat
-        # only ones that have received real sync data as "configured" so
-        # entity counts reflect the real panel, not the library's ceiling.
         configured_areas = [a for a in areas if a.configured] or areas[:1]
         num_areas = max(len(configured_areas), 1)
 
@@ -508,9 +448,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             logical = self._get_enum_value(zone.logical_status)  # type: ignore[attr-defined]
             definition = self._get_enum_value(zone.definition)  # type: ignore[attr-defined]
 
-            # ZoneLogicalStatus: 0=normal, 1=trouble, 2=violated, 3=bypassed
-            # (only 4 values - not the "violated-and-bypassed=5" this used
-            # to check for, which isn't a value the enum has).
+            # ZoneLogicalStatus: 0=normal, 1=trouble, 2=violated, 3=bypassed.
             if logical == 2:
                 faulted_indices.append(zone.index)
                 faulted_names.append(f"Zone {zone.index + 1}: {zone.name}")
@@ -667,8 +605,6 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         self.last_command_timeout = None
         return True
 
-    # ---- STANDARDIZED ALARM CONTROL PANEL METHODS ----
-
     async def async_alarm_disarm(self, area_index: int, code: int = 0) -> bool:
         """Send disarm command for specific area."""
         return await self._execute_arm_cmd(ArmLevel.DISARM, area_index, code)
@@ -728,8 +664,6 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
 
         return await self.async_confirm_command(sender, "AS", "arm/disarm command", _matches)
 
-    # ---- ADDITIONAL HARDWARE METHODS ----
-
     async def bypass_zone(self, zone_number: int, pin_code: str | None = None) -> bool:
         """Bypass a zone (1-indexed, matching the panel's own numbering)."""
         if not self._elk:
@@ -749,12 +683,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         )
 
     async def unbypass_zone(self, zone_number: int, pin_code: str | None = None) -> bool:
-        """Clear a zone's bypass.
-
-        The Elk ASCII protocol has a single `zb` bypass command with no
-        separate "unbypass a specific zone" command - resending it for an
-        already-bypassed zone toggles it back off.
-        """
+        """Clear a zone's bypass by re-sending the toggle-only `zb` command."""
         return await self.bypass_zone(zone_number, pin_code)
 
     async def trigger_zone(self, zone_number: int) -> bool:

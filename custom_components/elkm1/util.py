@@ -25,11 +25,9 @@ def deprecate_entity(
     Returns True to allow entity creation, or False to skip.
     """
     try:
-        # Look up existing entity in the entity registry by unique_id
         entity_id = entity_registry.async_get_entity_id(platform, "elkm1", unique_id)
         if entity_id:
             entry = entity_registry.async_get(entity_id)
-            # If the target entity ID doesn't exist yet, update the unique ID
             if entry and entry.entity_id != new_entity_id and not entity_registry.async_get(new_entity_id):
                 _LOGGER.info(
                     "Migrating legacy Elk-M1 entity %s to new structure",
@@ -41,5 +39,4 @@ def deprecate_entity(
     except Exception as err:
         _LOGGER.debug("Error during entity deprecation check for %s: %s", unique_id, err)
 
-    # Return True so the entity successfully registers and initializes
     return True

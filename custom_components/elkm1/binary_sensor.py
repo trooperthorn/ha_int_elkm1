@@ -21,16 +21,7 @@ from .models import ElkRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
-# Map raw ELK zone-definition (ZoneType) values to Home Assistant device
-# classes. These are the panel's *response* categories (entry/exit delay,
-# perimeter-instant, interior, etc.) - the protocol has no separate field
-# for physical sensor type, so 1/2 (entry/exit) are assumed to be doors by
-# near-universal installer convention, and 3 (perimeter-instant) is mapped
-# to the generic OPENING class rather than WINDOW specifically, since
-# perimeter-instant is also commonly used for non-entry doors and the
-# protocol gives no way to tell the two apart.
-# 1-2: Entry/Exit (door), 3: Perimeter instant (opening), 4-7: Interior
-# (motion), 10-11: Fire, 17: CO, 19: Freeze, 20: Gas, 21: Heat, 25: Water
+# ZoneType encodes arming response, not sensor type; classes are installer convention. See docs/protocol.md.
 _DEVICE_CLASS_MAP: dict[int, BinarySensorDeviceClass] = {
     1: BinarySensorDeviceClass.DOOR,
     2: BinarySensorDeviceClass.DOOR,
@@ -48,10 +39,7 @@ _DEVICE_CLASS_MAP: dict[int, BinarySensorDeviceClass] = {
     25: BinarySensorDeviceClass.MOISTURE,
 }
 
-# Zone definitions that count as a door/window opening for the per-area
-# aggregate sensor below - entry/exit and perimeter-instant zones, which
-# in practice are overwhelmingly door/window contacts even though the
-# protocol doesn't guarantee it (see _DEVICE_CLASS_MAP comment above).
+# Entry/exit and perimeter-instant zones count as door/window openings for the per-area sensor.
 _OPENING_DEFINITIONS = {1, 2, 3}
 
 
@@ -65,13 +53,12 @@ async def async_setup_entry(
     coordinator = runtime_data.coordinator
 
     def _zone_entity(zone: Any) -> BinarySensorEntity | None:
-        # Safely extract the zone definition (integer representation)
         def_val = 0
         if hasattr(zone, "definition"):
             def_obj = zone.definition
             def_val = int(def_obj.value) if hasattr(def_obj, "value") else int(def_obj)
 
-        # Skip 33 (TEMPERATURE) and 34 (ANALOG_ZONE) - these are handled natively in sensor.py
+        # Definitions 33 (temperature) and 34 (analog) are sensor.py entities, not binary sensors.
         if def_val in (33, 34):
             return None
 
@@ -90,13 +77,7 @@ async def async_setup_entry(
         for _index, (name, label) in TROUBLE_INDEX_NAMES.items()
     )
 
-    # Aggregate "any door/window open" sensor per area - the primary,
-    # hardware-independent integration point for Better Thermostat (or any
-    # other climate integration): it doesn't require the panel to have any
-    # Elk-connected thermostats, just door/window contact zones, which is
-    # the common case. One entity per configured area, not per install,
-    # since a multi-area panel (e.g. house + garage apartment) may want
-    # HVAC in one area unaffected by an open door in another.
+    # One aggregate opening sensor per area; see docs/cross_integration.md.
     num_areas = coordinator.data.num_areas if coordinator.data else 1
     entities.extend(
         ElkAreaOpeningsBinarySensor(coordinator, config_entry, area_index)
@@ -178,9 +159,7 @@ class ElkBinarySensor(ElkEntity, BinarySensorEntity):
             "physical_status": self._get_enum_value(getattr(zone, "physical_status", 0)),
             "logical_status": logical_status,
             "definition": self._get_enum_value(getattr(zone, "definition", 0)),
-            # ZoneLogicalStatus.BYPASSED == 3; Zone has no separate
-            # "bypassed" attribute of its own (bypass is its own logical
-            # status value, not a flag layered on top of another one).
+            # BYPASSED (3) is its own logical status; Zone has no separate bypassed flag.
             "bypassed": logical_status == 3,
             "triggered_alarm": getattr(zone, "triggered_alarm", False),
             "voltage": getattr(zone, "voltage", 0.0),
@@ -224,14 +203,7 @@ class ElkTroubleBinarySensor(ElkEntity, BinarySensorEntity):
 
 
 class ElkAreaOpeningsBinarySensor(ElkEntity, BinarySensorEntity):
-    """Aggregate 'any door/window open' sensor for one area.
-
-    Feeds Better Thermostat's (or any climate integration's) window/door
-    open-pause feature without requiring the panel to have Elk-connected
-    thermostats - most installs won't. This is the primary Better
-    Thermostat integration point; climate.py's ElkThermostat entity
-    (for installs that do have Elk-connected HVAC) is secondary.
-    """
+    """Aggregate 'any door/window open' sensor for one area."""
 
     _attr_device_class = BinarySensorDeviceClass.OPENING
 

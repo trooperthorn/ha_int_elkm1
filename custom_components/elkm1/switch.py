@@ -7,37 +7,22 @@ from datetime import timedelta
 from math import ceil
 from typing import Any, override
 
-import voluptuous as vol
 from elkm1_lib.const import ThermostatMode, ThermostatSetting
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv, service
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import VolDictType
 
-from .const import ATTR_DURATION, DOMAIN
 from .coordinator import ElkDataUpdateCoordinator
 from .entity import ElkEntity, async_add_dynamic_entities, create_elk_system_device_info
 from .models import ElkRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
-# The panel has a single serialized command buffer with no flow control -
-# concurrent writes from multiple entities must not overlap.
+# The panel has one serialized command buffer with no flow control; writes must not overlap.
 PARALLEL_UPDATES = 1
-SWITCH_DOMAIN = "switch"
-
-SERVICE_SWITCH_OUTPUT_TURN_ON_FOR = "switch_output_turn_on_for"
-
-ELK_OUTPUT_TURN_ON_FOR_SERVICE_SCHEMA: VolDictType = {
-    vol.Required(ATTR_DURATION): vol.All(
-        cv.time_period,
-        vol.Range(min=timedelta(seconds=1), max=timedelta(seconds=65535)),
-    ),
-}
 
 
 async def async_setup_entry(
@@ -51,20 +36,10 @@ async def async_setup_entry(
 
     entities: list[SwitchEntity] = []
 
-    # 1. Native Proxy Switch for Atmospheric Pre-Arm Blueprint
     entities.append(ElkArmRequestSwitch(coordinator, config_entry))
 
     async_add_entities(entities)
 
-    # elkm1_lib always allocates the hardware-maximum number of Output/
-    # Thermostat/Zone objects regardless of how many the panel actually
-    # has, and only marks one `.configured` once its panel-assigned name
-    # has synced - a sequential, one-index-at-a-time exchange that can
-    # still be in progress after this function returns, so each of these
-    # is added as it individually becomes configured rather than only in
-    # this one pass.
-
-    # 2. Native Physical Outputs
     outputs = coordinator.data.outputs if coordinator.data else []
     async_add_dynamic_entities(
         config_entry,
@@ -73,15 +48,11 @@ async def async_setup_entry(
         outputs[:64],
         lambda output: ElkOutput(coordinator, config_entry, output.index),
     )
-    # The M1 reports/controls outputs 65-208 but deliberately has no text
-    # descriptions for them. Expose those wire-level outputs disabled by
-    # default so advanced installations can opt in without creating 144
-    # enabled, generically named entities for every panel.
+    # Outputs 65-208 have no panel text descriptions; created disabled by default.
     async_add_entities(
         [ElkOutput(coordinator, config_entry, output.index) for output in outputs[64:]]
     )
 
-    # 3. Thermostat Emergency Heat Switches
     thermostats = coordinator.data.thermostats if coordinator.data else []
     async_add_dynamic_entities(
         config_entry,
@@ -91,7 +62,6 @@ async def async_setup_entry(
         lambda tstat: ElkThermostatEMHeat(coordinator, config_entry, tstat.index),
     )
 
-    # 4. Zone Bypass Switches
     zones = coordinator.data.zones if coordinator.data else []
     async_add_dynamic_entities(
         config_entry,
@@ -99,15 +69,6 @@ async def async_setup_entry(
         async_add_entities,
         zones,
         lambda zone: ElkZoneBypassSwitch(coordinator, config_entry, zone.index),
-    )
-
-    service.async_register_platform_entity_service(
-        hass,
-        DOMAIN,
-        SERVICE_SWITCH_OUTPUT_TURN_ON_FOR,
-        entity_domain=SWITCH_DOMAIN,
-        schema=ELK_OUTPUT_TURN_ON_FOR_SERVICE_SCHEMA,
-        func="async_switch_output_turn_on_for",
     )
 
 
@@ -280,11 +241,7 @@ class ElkThermostatEMHeat(ElkEntity, SwitchEntity):
 class ElkZoneBypassSwitch(ElkEntity, SwitchEntity):
     """Representation of an Elk-M1 zone's bypass state as a switch.
 
-    The Elk protocol's `zb` bypass command toggles a zone's bypass state -
-    there's no separate "set bypassed"/"set unbypassed" command - so
-    turn_on/turn_off only send it when the zone isn't already in the
-    requested state, keeping the switch's on/off semantics idempotent
-    despite the underlying toggle-only command.
+    `zb` is a toggle, so turn_on/turn_off only send it when the state differs.
     """
 
     _attr_entity_category = None

@@ -1,7 +1,7 @@
 {
   "name": "RS232 - Elk-M1 Control",
   "content_in_root": false,
-  "homeassistant": "2026.8.3",
+  "homeassistant": "2026.9.0",
   "hacs": "1.32.0",
   "render_readme": true
 }

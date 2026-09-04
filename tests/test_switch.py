@@ -1,6 +1,5 @@
 """Tests for switch.py: output on/off/turn-on-for, and the zone bypass
-switch's idempotent toggle-mapping (the protocol's `zb` bypass command is a
-raw toggle, so turn_on/turn_off have to check current state before sending).
+switch's idempotent toggle-mapping.
 """
 
 from __future__ import annotations

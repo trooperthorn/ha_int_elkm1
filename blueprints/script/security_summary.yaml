@@ -19,7 +19,6 @@ sequence:
       - delay:
           seconds: 1
 
-      # 3. Dynamically loop through and announce each faulted zone number
       - repeat:
           for_each: "{{ security_status.faulted_zone_numbers }}"
           sequence:
