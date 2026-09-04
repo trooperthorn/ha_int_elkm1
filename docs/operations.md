@@ -8,11 +8,12 @@ facts live in `protocol.md`; design rationale lives in `design.md`.
 The gate is the same on a workstation and in CI: `ruff check .`, `mypy
 --config-file mypy.ini custom_components/elkm1`, `pytest -ra --strict-markers
 tests/`, then `python scripts/build_release_artifacts.py --validate-only`.
-Pins live in `requirements-dev.txt`: the Home Assistant test harness
-(`pytest-homeassistant-custom-component`) pins the beta core it was cut from,
-and the explicit `homeassistant` line re-resolves to the stable release the
-integration targets. The CI job asserts the installed core version so a
-harness bump that silently moves the core is caught. The harness imports
+Pins live in `requirements-dev.txt` and `requirements-core.txt`. The Home
+Assistant test harness (`pytest-homeassistant-custom-component`) pins the
+beta core it was cut from, and pip refuses to resolve a different core in the
+same install, so the stable `homeassistant` pin lives in its own file and is
+installed second. The CI job asserts the installed core version so a harness
+bump that silently moves the core is caught. The harness imports
 `fcntl`, so on Windows the suite runs under WSL.
 
 ## Release path
