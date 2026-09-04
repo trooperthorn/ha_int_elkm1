@@ -91,3 +91,21 @@ async def test_unknown_prefix_raises_homeassistant_error(hass, registered_coordi
         await hass.services.async_call(
             DOMAIN, "speak_word", {"number": 1, "prefix": "nonexistent"}, blocking=True
         )
+
+
+async def test_entity_services_register_without_platform_setup(hass) -> None:
+    """Every entity service exists after async_setup_services alone."""
+    await async_setup_services(hass)
+
+    for name in (
+        "alarm_bypass",
+        "alarm_clear_bypass",
+        "alarm_arm_home_instant",
+        "alarm_arm_night_instant",
+        "sensor_counter_refresh",
+        "sensor_counter_set",
+        "sensor_zone_bypass",
+        "sensor_zone_trigger",
+        "switch_output_turn_on_for",
+    ):
+        assert hass.services.has_service(DOMAIN, name), name

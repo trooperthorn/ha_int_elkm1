@@ -152,10 +152,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElkM1ConfigEntry) -> boo
             f"Timed out or failed connecting to {connection_url}"
         ) from err
 
-    # Verify panel version and log required global settings reminders.
-    # Runs in the background, not awaited here: it waits several seconds
-    # to give broadcast-based settings a chance to prove themselves, and
-    # is purely diagnostic - entity setup shouldn't wait on it.
+    # Not awaited: diagnostic only, and it sleeps to let broadcasts arrive.
     async def _background_verify() -> None:
         try:
             await verify_panel_configuration(coordinator)

@@ -56,14 +56,7 @@ def test_manager_defaults_to_the_standard_heartbeat_timeout() -> None:
 
 
 def test_manager_accepts_a_scaled_heartbeat_timeout() -> None:
-    """A poll interval longer than the default heartbeat window must not force reconnects.
-
-    Regression test: the network heartbeat only proves *some* traffic is
-    arriving. With a fixed 120s window and no push broadcasts, a configured
-    poll interval past 120s (allowed up to MAX_POLL_INTERVAL=300) would
-    starve the heartbeat between polls and force a reconnect that has
-    nothing to do with real connection health.
-    """
+    """A poll interval longer than the default heartbeat window must not force reconnects."""
     manager = ElkConnectionManager(
         Elk({"url": "elk://127.0.0.1:2101"}), heartbeat_timeout=250.0
     )
@@ -194,7 +187,7 @@ async def test_baud_probe_ignores_unsolicited_frame_before_vn() -> None:
     reader = _Reader(f"{unsolicited}\r\n{version}\r\n".encode())
 
     with patch(
-        "custom_components.elkm1.helpers.baud_probe.serial_asyncio_fast.open_serial_connection",
+        "custom_components.elkm1.helpers.baud_probe.serialx.open_serial_connection",
         AsyncMock(return_value=(reader, writer)),
     ):
         opened = await _try_baud("COM1", 14400)

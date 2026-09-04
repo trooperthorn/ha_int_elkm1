@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import voluptuous as vol
 from homeassistant.core import (
     HomeAssistant,
@@ -10,10 +12,24 @@ from homeassistant.core import (
     SupportsResponse,
 )
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, service
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import (
+    COUNTER_SET_SERVICE_SCHEMA,
+    DOMAIN,
+    ELK_OUTPUT_TURN_ON_FOR_SERVICE_SCHEMA,
+    ELK_USER_CODE_SERVICE_SCHEMA,
+    SERVICE_ALARM_ARM_HOME_INSTANT,
+    SERVICE_ALARM_ARM_NIGHT_INSTANT,
+    SERVICE_ALARM_BYPASS,
+    SERVICE_ALARM_CLEAR_BYPASS,
+    SERVICE_SENSOR_COUNTER_REFRESH,
+    SERVICE_SENSOR_COUNTER_SET,
+    SERVICE_SENSOR_ZONE_BYPASS,
+    SERVICE_SENSOR_ZONE_TRIGGER,
+    SERVICE_SWITCH_OUTPUT_TURN_ON_FOR,
+)
 from .coordinator import ElkDataUpdateCoordinator
 from .models import ElkRuntimeData
 
@@ -108,15 +124,13 @@ async def _async_get_security_summary(service: ServiceCall) -> ServiceResponse:
     """Return live security data to an automation or script."""
     coordinator = _get_coordinator(service)
 
-    # Read instantly from our normalized coordinator data
     faulted_indices = coordinator.data.zones_faulted if coordinator.data else []
 
-    # Elk zones are 1-indexed for the user, indices are 0-indexed
+    # Zones are 1-indexed to the user, 0-indexed in the list.
     faulted_zones = [idx + 1 for idx in faulted_indices]
 
     areas = coordinator.data.areas.values() if coordinator.data else []
-    # AS Arm Up State is authoritative. State 1 is ready and state 2 can be
-    # force armed; callers can still inspect the faulted-zone list separately.
+    # AS arm-up state is authoritative: 1 = ready, 2 = can be force armed.
     ready_to_arm = bool(coordinator.data) and all(area.arm_up_state in (1, 2) for area in areas)
 
     return {
@@ -126,8 +140,55 @@ async def _async_get_security_summary(service: ServiceCall) -> ServiceResponse:
     }
 
 
+ENTITY_SERVICES: tuple[tuple[str, str, dict[Any, Any] | None, str], ...] = (
+    (
+        "alarm_control_panel",
+        SERVICE_ALARM_BYPASS,
+        ELK_USER_CODE_SERVICE_SCHEMA,
+        "async_alarm_bypass",
+    ),
+    (
+        "alarm_control_panel",
+        SERVICE_ALARM_CLEAR_BYPASS,
+        ELK_USER_CODE_SERVICE_SCHEMA,
+        "async_alarm_clear_bypass",
+    ),
+    (
+        "alarm_control_panel",
+        SERVICE_ALARM_ARM_HOME_INSTANT,
+        ELK_USER_CODE_SERVICE_SCHEMA,
+        "async_alarm_arm_home_instant",
+    ),
+    (
+        "alarm_control_panel",
+        SERVICE_ALARM_ARM_NIGHT_INSTANT,
+        ELK_USER_CODE_SERVICE_SCHEMA,
+        "async_alarm_arm_night_instant",
+    ),
+    ("number", SERVICE_SENSOR_COUNTER_REFRESH, None, "async_counter_refresh"),
+    ("number", SERVICE_SENSOR_COUNTER_SET, COUNTER_SET_SERVICE_SCHEMA, "async_counter_set"),
+    ("sensor", SERVICE_SENSOR_ZONE_BYPASS, ELK_USER_CODE_SERVICE_SCHEMA, "async_zone_bypass"),
+    ("sensor", SERVICE_SENSOR_ZONE_TRIGGER, None, "async_zone_trigger"),
+    (
+        "switch",
+        SERVICE_SWITCH_OUTPUT_TURN_ON_FOR,
+        ELK_OUTPUT_TURN_ON_FOR_SERVICE_SCHEMA,
+        "async_switch_output_turn_on_for",
+    ),
+)
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
-    """Create ElkM1 services."""
+    """Create ElkM1 services, entity services included."""
+    for entity_domain, name, schema, func in ENTITY_SERVICES:
+        service.async_register_platform_entity_service(
+            hass,
+            DOMAIN,
+            name,
+            entity_domain=entity_domain,
+            schema=schema,
+            func=func,
+        )
     hass.services.async_register(
         DOMAIN, "speak_word", _async_speak_word_service, SPEAK_SERVICE_SCHEMA
     )

@@ -1,32 +1,35 @@
-name: Validate Integration
+# Catches the class of problem that breaks a HACS install (a manifest or
+# hacs.json HACS cannot parse, a missing required key, a bad domain) before a
+# release is cut. The weekly run catches drift in the validators themselves.
+name: Validate
 
 on:
   push:
-    branches: [ main, "codex/**" ]
   pull_request:
-    branches: [ main ]
+  workflow_dispatch:
   workflow_call:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
 
 jobs:
-  hassfest:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Run hassfest
-        uses: home-assistant/actions/hassfest@master
-
   hacs:
+    name: HACS validation
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Run HACS validation
-        uses: hacs/action@main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main on 2026-09-03
         with:
           category: integration
-          # HACS reads license metadata from the repository's default branch,
-          # not the checked-out feature branch. Validate it normally on main;
-          # branch runs still validate the other repository and integration gates.
+          # HACS reads license metadata from the default branch, so feature
+          # branches skip that one check; main validates it.
           ignore: ${{ github.ref != 'refs/heads/main' && 'license' || '' }}
 
+  hassfest:
+    name: hassfest (manifest sanity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # master on 2026-09-03

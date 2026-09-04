@@ -47,15 +47,7 @@ class AreaData:
 class ElkPanelData:
     """Typed snapshot of Elk-M1 panel state, as built by the coordinator.
 
-    `zones`/`outputs`/`tasks`/`thermostats`/`panel` are references to
-    elkm1_lib's own already-typed Element objects (Zone, Output, Task,
-    Thermostat, Panel) rather than being converted into a second, parallel
-    set of dataclasses - elkm1_lib's objects are the source of truth and
-    entities read live attributes off them directly. Only the panel-wide
-    aggregates the old code built ad hoc from raw dict/string parsing
-    (areas, faulted/active summaries, connection-derived fields) are
-    promoted to typed fields here, since those previously lived in an
-    untyped dict[str, Any] with stringly-typed keys.
+    Element lists are references to elkm1_lib's live objects, not copies.
     """
 
     panel_version: str | None = None
@@ -90,5 +82,4 @@ class ElkPanelData:
     bypassed_zones: list[str] = field(default_factory=list)
 
 
-# Alias to prevent import crashes during migration
 ELKM1Data = ElkRuntimeData

@@ -5,12 +5,10 @@ ruff==0.16.3
 mypy==2.3.1
 
 # Home Assistant Core & Testing
-homeassistant==2026.8.3
 pytest==9.0.3
 pytest-asyncio==1.4.0
-pytest-homeassistant-custom-component==0.13.357
+pytest-homeassistant-custom-component==0.13.362
 
 # Integration Dependencies
-pyserial==3.5
 elkm1-lib==2.2.15
-pyserial-asyncio-fast==0.16
+serialx==1.9.0

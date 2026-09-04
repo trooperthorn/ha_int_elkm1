@@ -24,9 +24,8 @@
     "elkm1_lib"
   ],
   "requirements": [
-    "pyserial==3.5",
-    "pyserial-asyncio-fast==0.16",
-    "elkm1-lib==2.2.15"
+    "elkm1-lib==2.2.15",
+    "serialx==1.9.0"
   ],
   "version": "2026.09.03.1"
 }

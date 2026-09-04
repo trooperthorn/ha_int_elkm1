@@ -1,14 +1,7 @@
 """Panel settings configuration and verification.
 
-The Elk-M1 ASCII protocol has no command to read back the panel's Global
-Programming "Xmit ... Changes" bits (locations 30, 35-40) that gate
-whether it proactively broadcasts zone/output/task/light/keypad changes
-and event-log entries - these can only be set via a keypad or ElkRP, not
-queried over the RS232/IP link. So there is no way to directly confirm
-whether they're enabled; the best this module can do is empirically infer
-it from whether the corresponding broadcast type has actually been seen
-since connecting, and be honest that "not seen yet" isn't proof it's
-disabled (it could just mean nothing of that type has changed yet).
+The Xmit Changes bits cannot be read back; they are inferred from observed
+broadcasts. See docs/protocol.md.
 """
 
 from __future__ import annotations
@@ -33,10 +26,7 @@ REQUIRED_SETTINGS: dict[int, tuple[str, str]] = {
 async def check_required_settings(coordinator: Any) -> dict[int, dict[str, Any]]:
     """Report, per Global Programming location, whether its broadcast has been observed.
 
-    `enabled` here means "confirmed active" (the broadcast has been seen at
-    least once), not "confirmed disabled" when False - the honest label for
-    a location whose broadcast hasn't arrived yet is "unconfirmed", since
-    that can just mean nothing of that type has changed since connecting.
+    `enabled` False means "unconfirmed", not "confirmed disabled".
     """
     counts = getattr(coordinator, "broadcast_counts", {})
     return {
@@ -60,10 +50,7 @@ async def check_panel_version(coordinator: Any) -> str | None:
         Version string (e.g., "4.6.8" or "5.2.0") or None if not available
     """
     try:
-        # The panel version is already requested as part of the panel's
-        # sync-on-connect sequence (Panel.sync() sends vn); the reply is
-        # async and may not have arrived yet right after first refresh, so
-        # poll briefly rather than assuming it's already there.
+        # Panel.sync() already sent vn; the reply is async, so poll briefly.
         version = coordinator.data.panel_version
         for _ in range(15):
             if version:
@@ -80,11 +67,7 @@ async def check_panel_version(coordinator: Any) -> str | None:
             patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
             version_tuple = (major, minor, patch)
 
-            # Minimum: 4.6.8+ on the 4.x branch, or 5.2.0+ on 5.x and later -
-            # a plain version_tuple >= (4, 6, 8) would also accept 5.0.0/5.1.x
-            # (lexicographic comparison stops at the first differing element),
-            # which are below the required 5.2.0 floor, so the 4.x branch is
-            # checked only when major == 4.
+            # Floor is 4.6.8 on 4.x or 5.2.0 on 5.x+; a plain tuple compare would accept 5.0.x.
             if version_tuple >= (5, 2, 0) or (major == 4 and version_tuple >= (4, 6, 8)):
                 _LOGGER.info("Panel version %s is supported", version)
                 return str(version)
@@ -105,13 +88,7 @@ async def check_panel_version(coordinator: Any) -> str | None:
 
 
 async def verify_panel_configuration(coordinator: Any) -> tuple[bool, dict[str, Any]]:
-    """Verify panel is properly configured for Home Assistant.
-
-    Gives Global Programming broadcast settings a brief window to prove
-    themselves (a real change would normally arrive within a few seconds
-    of connecting if push updates are working) before reporting which are
-    confirmed active vs. unconfirmed.
-    """
+    """Verify panel is properly configured for Home Assistant."""
     _LOGGER.info("Verifying ELK-M1 panel configuration...")
 
     details: dict[str, Any] = {}

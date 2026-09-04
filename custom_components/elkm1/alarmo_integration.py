@@ -1,11 +1,6 @@
 """Alarmo auto-setup helper for ELK-M1 integration.
 
-This file provides utilities to automatically configure Alarmo with ELK-M1 zones.
-
-Since Alarmo auto-discovers binary_sensor entities, the workflow is:
-1. ELK-M1 integration creates binary_sensor entities for all zones
-2. Alarmo automatically discovers these zones in its "Sensors" tab
-3. This helper provides a service to automatically configure them
+Provides the service that configures Alarmo with ELK-M1 zone sensors.
 """
 
 from __future__ import annotations
@@ -36,11 +31,7 @@ async def async_setup_alarmo_auto_config(hass: HomeAssistant) -> None:
         elk_zones = []
 
         for entity in entity_reg.entities.values():
-            # Zone sensors are distinguished from other elkm1 binary_sensor
-            # entities (trouble conditions) by their unique_id, not the
-            # entity_id - entity_id is derived from the panel-configured
-            # zone name (e.g. "binary_sensor.front_door"), which won't
-            # contain the literal word "zone".
+            # Match on unique_id: entity_id comes from the panel zone name and never contains "zone".
             if (
                 entity.domain == "binary_sensor"
                 and entity.platform == DOMAIN
@@ -105,7 +96,6 @@ Zones are automatically detected by Alarmo. No manual configuration needed!
             notification_id=f"{DOMAIN}_alarmo_setup_success",
         )
 
-    # Register the service if not already registered
     if not hass.services.has_service(DOMAIN, "alarmo_auto_setup"):
         hass.services.async_register(
             DOMAIN,

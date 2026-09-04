@@ -63,7 +63,6 @@ action:
       - delay:
           seconds: 1
 
-      # 2. Announce Doors Count & Type (if any open)
       - if:
           - condition: template
             value_template: "{{ doors_count > 0 }}"
@@ -79,7 +78,6 @@ action:
           - delay:
               seconds: 2
 
-      # 3. Announce Windows Count & Type (if any open)
       - if:
           - condition: template
             value_template: "{{ windows_count > 0 }}"
@@ -93,11 +91,9 @@ action:
             data:
               number: 464  # "Window" vocabulary ID
 
-      # 4. Additional 5-second delay before listing specific sensors
       - delay:
           seconds: 5
 
-      # 5. Dynamically iterate through all open doors and windows and announce their names
       - repeat:
           for_each: >
             {% set win_ents = state_attr(win_sensor, 'open_entities') | default(state_attr(win_sensor, 'entity_id'), true) | default([], true) %}

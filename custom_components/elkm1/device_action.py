@@ -1,4 +1,3 @@
-# custom_components/elkm1/device_action.py
 from __future__ import annotations
 
 from typing import Any
@@ -11,7 +10,6 @@ from .const import DOMAIN
 
 ACTION_TYPES = {"speak_phrase", "display_message"}
 
-# Defines the UI fields the user will see in the automation editor
 ACTION_SCHEMA = cv.DEVICE_ACTION_BASE_SCHEMA.extend({
     vol.Required("type"): vol.In(ACTION_TYPES),
     vol.Optional("phrase_number"): cv.positive_int,
@@ -25,7 +23,6 @@ async def async_get_actions(
     registry = dr.async_get(hass)
     device = registry.async_get(device_id)
 
-    # Verify this device actually belongs to our integration
     if device and any(entry[0] == DOMAIN for entry in device.identifiers):
         return [
             {"device_id": device_id, "domain": DOMAIN, "type": "speak_phrase"},

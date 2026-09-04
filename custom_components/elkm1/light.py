@@ -33,12 +33,6 @@ async def async_setup_entry(
     runtime_data: ElkRuntimeData = config_entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    # elkm1_lib always allocates the hardware-maximum number of Light
-    # objects regardless of how many the panel actually has, and only
-    # marks one `.configured` once its panel-assigned name has synced - a
-    # sequential, one-index-at-a-time exchange that can still be in
-    # progress after this function returns, so lights are added as they
-    # individually become configured rather than only in this one pass.
     lights = coordinator.data.lights if coordinator.data else []
     async_add_dynamic_entities(
         config_entry,

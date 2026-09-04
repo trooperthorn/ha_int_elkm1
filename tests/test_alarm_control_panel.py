@@ -1,8 +1,4 @@
-"""Tests for alarm_control_panel.py: state mapping and the action-exceptions
-fix (a failed command used to be swallowed and only logged - HA's service
-call/automation trace would show success even when the panel rejected or
-never received the command).
-"""
+"""Tests for alarm_control_panel.py: state mapping and command failures raising HomeAssistantError."""
 
 from __future__ import annotations
 

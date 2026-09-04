@@ -14,10 +14,8 @@ from homeassistant.components.alarm_control_panel.const import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ELK_USER_CODE_SERVICE_SCHEMA
 from .coordinator import ElkDataUpdateCoordinator
 from .entity import ElkEntity
 from .models import AreaData, ElkRuntimeData
@@ -27,12 +25,6 @@ from .protocol import (
     alarm_is_active,
 )
 
-SERVICE_ALARM_BYPASS = "alarm_bypass"
-SERVICE_ALARM_CLEAR_BYPASS = "alarm_clear_bypass"
-SERVICE_ALARM_ARM_HOME_INSTANT = "alarm_arm_home_instant"
-SERVICE_ALARM_ARM_NIGHT_INSTANT = "alarm_arm_night_instant"
-
-# Map modern enum states
 STATE_ALARM_TRIGGERED = AlarmControlPanelState.TRIGGERED
 STATE_ARMED_AWAY = AlarmControlPanelState.ARMED_AWAY
 STATE_ARMED_HOME = AlarmControlPanelState.ARMED_HOME
@@ -41,8 +33,7 @@ STATE_DISARMED = AlarmControlPanelState.DISARMED
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
-# The panel has a single serialized command buffer with no flow control -
-# concurrent writes from multiple entities must not overlap.
+# The panel has one serialized command buffer with no flow control; writes must not overlap.
 PARALLEL_UPDATES = 1
 
 
@@ -55,7 +46,6 @@ async def async_setup_entry(
     runtime_data: ElkRuntimeData = config_entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    # The coordinator now dictates how many areas exist based on connection parsing
     num_areas = coordinator.data.num_areas if coordinator.data else 1
 
     entities = [
@@ -68,26 +58,6 @@ async def async_setup_entry(
     ]
 
     async_add_entities(entities)
-
-    platform = entity_platform.async_get_current_platform()
-    platform.async_register_entity_service(
-        SERVICE_ALARM_BYPASS, ELK_USER_CODE_SERVICE_SCHEMA, "async_alarm_bypass"
-    )
-    platform.async_register_entity_service(
-        SERVICE_ALARM_CLEAR_BYPASS,
-        ELK_USER_CODE_SERVICE_SCHEMA,
-        "async_alarm_clear_bypass",
-    )
-    platform.async_register_entity_service(
-        SERVICE_ALARM_ARM_HOME_INSTANT,
-        ELK_USER_CODE_SERVICE_SCHEMA,
-        "async_alarm_arm_home_instant",
-    )
-    platform.async_register_entity_service(
-        SERVICE_ALARM_ARM_NIGHT_INSTANT,
-        ELK_USER_CODE_SERVICE_SCHEMA,
-        "async_alarm_arm_night_instant",
-    )
 
 
 class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
@@ -134,25 +104,22 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
         armed_status_val = data.armed_status
         arm_up_state_val = data.arm_up_state
 
-        # Full alarm is exactly the documented '3' through 'B' state table.
         if alarm_is_active(alarm_state_val):
             return STATE_ALARM_TRIGGERED
 
-        # Abort delay is still a cancellable pending interval, not full alarm.
+        # Abort delay (state 2) is a cancellable pending interval, not full alarm.
         if alarm_state_val in (ALARM_STATE_ENTRANCE_DELAY, ALARM_STATE_ABORT_DELAY):
             return AlarmControlPanelState.PENDING
         if data.entry_delay_active:
             return AlarmControlPanelState.PENDING
 
-        # Force-armed state 5 is stable; only state 3 is the exit timer.
+        # Arm-up state 5 (force armed) is stable; only state 3 is the exit timer.
         if data.exit_delay_active or arm_up_state_val == 3:
             return AlarmControlPanelState.ARMING
 
-        # 4. ARMED_CUSTOM_BYPASS: Armed with Bypass active
         if arm_up_state_val == 6 and armed_status_val != 0:
             return AlarmControlPanelState.ARMED_CUSTOM_BYPASS
 
-        # 5. Stable Arming Modes
         if armed_status_val == 1:
             return STATE_ARMED_AWAY
         if armed_status_val in (2, 3):
@@ -215,12 +182,7 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
             raise HomeAssistantError("ELK-M1 PIN must contain numeric digits only") from err
 
     async def _async_run_command(self, coro: Any, action_desc: str) -> None:
-        """Await a coordinator command, raising HomeAssistantError on failure.
-
-        Without this, a failed command would only be logged - HA's service
-        call/automation trace would show success even though the panel
-        never got (or rejected) the command.
-        """
+        """Await a coordinator command, raising HomeAssistantError on failure."""
         try:
             await coro
         except HomeAssistantError:

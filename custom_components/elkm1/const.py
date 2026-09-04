@@ -7,13 +7,13 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.const import ATTR_CODE, CONF_ZONE
+from homeassistant.helpers import config_validation as cv
 
 DOMAIN = "elkm1"
 MANUFACTURER = "Elk Products"
 MODEL = "M1 Gold / M1EZ8"
 LOGIN_TIMEOUT = 20
 
-# Connection Configuration Keys & Types
 CONF_CONNECTION_TYPE = "connection_type"
 CONF_SERIAL_PORT = "serial_port"
 CONF_HOST = "host"
@@ -49,7 +49,6 @@ CONF_TEMPERATURE_UNIT = "temperature_unit"
 DISCOVER_SCAN_TIMEOUT = 10
 DISCOVERY_INTERVAL = timedelta(minutes=15)
 
-# Hardcoded M1 Gold Hardware Maximums to replace elkm1_lib.const.Max
 ELK_ELEMENTS = {
     CONF_AREA: 8,
     CONF_COUNTER: 64,
@@ -62,7 +61,6 @@ ELK_ELEMENTS = {
     CONF_ZONE: 208,
 }
 
-# Keypad and automation event constants
 EVENT_ELKM1_KEYPAD_KEY_PRESSED = "elkm1.keypad_key_pressed"
 
 ATTR_DURATION = "duration"
@@ -75,7 +73,27 @@ ATTR_CHANGED_BY_ID = "changed_by_id"
 ATTR_CHANGED_BY_TIME = "changed_by_time"
 ATTR_VALUE = "value"
 
-# Native service schema validation for strict PIN enforcement
 ELK_USER_CODE_SERVICE_SCHEMA: dict[Any, Any] = {
     vol.Required(ATTR_CODE): vol.All(vol.Coerce(int), vol.Range(0, 999999))
+}
+
+SERVICE_ALARM_BYPASS = "alarm_bypass"
+SERVICE_ALARM_CLEAR_BYPASS = "alarm_clear_bypass"
+SERVICE_ALARM_ARM_HOME_INSTANT = "alarm_arm_home_instant"
+SERVICE_ALARM_ARM_NIGHT_INSTANT = "alarm_arm_night_instant"
+SERVICE_SENSOR_COUNTER_REFRESH = "sensor_counter_refresh"
+SERVICE_SENSOR_COUNTER_SET = "sensor_counter_set"
+SERVICE_SENSOR_ZONE_BYPASS = "sensor_zone_bypass"
+SERVICE_SENSOR_ZONE_TRIGGER = "sensor_zone_trigger"
+SERVICE_SWITCH_OUTPUT_TURN_ON_FOR = "switch_output_turn_on_for"
+
+COUNTER_SET_SERVICE_SCHEMA: dict[Any, Any] = {
+    vol.Required("value"): vol.All(vol.Coerce(int), vol.Range(min=0, max=65535)),
+}
+
+ELK_OUTPUT_TURN_ON_FOR_SERVICE_SCHEMA: dict[Any, Any] = {
+    vol.Required(ATTR_DURATION): vol.All(
+        cv.time_period,
+        vol.Range(min=timedelta(seconds=1), max=timedelta(seconds=65535)),
+    ),
 }

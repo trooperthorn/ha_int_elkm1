@@ -1,0 +1,8 @@
+{
+  "tag_prefix": "v",
+  "timezone": "America/Chicago",
+  "release_paths": ["custom_components/elkm1"],
+  "version_fields": [
+    {"path": "custom_components/elkm1/manifest.json", "kind": "json", "key": "version"}
+  ]
+}

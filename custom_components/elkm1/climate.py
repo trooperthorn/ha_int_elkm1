@@ -19,9 +19,7 @@ from .models import ElkRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
-# Serialize writes: the panel has a single small (250-char) serial buffer
-# and no hardware flow control, so concurrent commands from the same
-# integration risk overrunning it.
+# The panel has one serialized command buffer with no flow control; writes must not overlap.
 PARALLEL_UPDATES = 1
 
 FAN_AUTO = "auto"
@@ -31,21 +29,16 @@ _HVAC_MODE_TO_ELK = {
     HVACMode.OFF: ThermostatMode.OFF,
     HVACMode.HEAT: ThermostatMode.HEAT,
     HVACMode.COOL: ThermostatMode.COOL,
-    # Elk's AUTO mode auto-switches between the heat and cool setpoints,
-    # which is HA's HEAT_COOL semantics, not HA's own (system-decides) AUTO.
+    # Elk AUTO switches between heat and cool setpoints, which is HA HEAT_COOL, not HA AUTO.
     HVACMode.HEAT_COOL: ThermostatMode.AUTO,
 }
 _ELK_MODE_TO_HVAC = {v: k for k, v in _HVAC_MODE_TO_ELK.items()}
-# Emergency heat is exposed separately as switch.*_emergency_heat
-# (switch.py's ElkThermostatEMHeat) rather than as a climate hvac_mode, to
-# avoid two competing controls for the same underlying setting.
 _ELK_MODE_TO_HVAC[ThermostatMode.EMERGENCY_HEAT] = HVACMode.HEAT
 
 _FAN_TO_ELK = {FAN_AUTO: ThermostatFan.AUTO, FAN_ON: ThermostatFan.ON}
 _ELK_FAN_TO_HA = {v: k for k, v in _FAN_TO_ELK.items()}
 
-# Conservative bounds; the protocol manual doesn't document panel-enforced
-# min/max setpoints, so these are generic HVAC-appropriate defaults.
+# The protocol manual documents no panel-enforced setpoint limits; these are generic defaults.
 MIN_TEMP = 40
 MAX_TEMP = 95
 
@@ -59,13 +52,6 @@ async def async_setup_entry(
     runtime_data: ElkRuntimeData = config_entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    # elkm1_lib always allocates the hardware-maximum number of
-    # Thermostat objects regardless of how many the panel actually has,
-    # and only marks one `.configured` once its panel-assigned name has
-    # synced - a sequential, one-index-at-a-time exchange that can still
-    # be in progress after this function returns, so thermostats are
-    # added as they individually become configured rather than only in
-    # this one pass.
     thermostats = coordinator.data.thermostats if coordinator.data else []
     async_add_dynamic_entities(
         config_entry,

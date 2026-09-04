@@ -77,13 +77,11 @@ blueprint:
       selector:
         action: {}
 
-# Trigger when the proxy toggle is turned on
 trigger:
   - platform: state
     entity_id: !input arm_request_toggle
     to: "on"
 
-# Map inputs to variables so they can be evaluated in Jinja templates
 variables:
   windows_entity: !input windows_sensor
   wind_entity: !input wind_sensor
@@ -91,13 +89,11 @@ variables:
   wind_thresh: !input wind_threshold
   rain_thresh: !input rain_threshold
   
-  # Extract live states
   open_windows_count: "{{ states(windows_entity) | int(0) }}"
   open_window_names: "{{ state_attr(windows_entity, 'open_entities') | default('Unknown') }}"
   current_wind: "{{ states(wind_entity) | float(0) }}"
   current_rain: "{{ states(rain_entity) | float(0) }}"
   
-  # Determine if atmospheric conditions exceed our defined safety thresholds
   is_weather_hazardous: >-
     {{ current_wind >= wind_thresh or current_rain >= rain_thresh }}
 
@@ -108,7 +104,6 @@ action:
           - condition: template
             value_template: "{{ open_windows_count > 0 and is_weather_hazardous }}"
         sequence:
-          # Broadcast the detailed warning using your TTS integration
           - action: tts.speak
             target:
               entity_id: !input tts_provider
