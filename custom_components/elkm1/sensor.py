@@ -87,13 +87,12 @@ class ElkSensor(ElkEntity, SensorEntity):
 class ElkActiveZonesSensor(ElkSensor):
     """Sensor that provides a live count and readable list of open zones."""
 
-    _attr_icon = "mdi:shield-alert-outline"
     _attr_native_unit_of_measurement = "Zones"
+    _attr_translation_key = "active_zones"
 
     def __init__(self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry) -> None:
         """Initialize the active zones sensor."""
         super().__init__(coordinator, config_entry, "active_zones_summary")
-        self._attr_name = "Active Zones"
         self._attr_unique_id = f"{config_entry.entry_id}_active_zones_summary"
 
     @property
@@ -122,7 +121,6 @@ class ElkPanel(ElkSensor):
     def __init__(self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry) -> None:
         """Initialize the panel sensor."""
         super().__init__(coordinator, config_entry, "panel_status")
-        self._attr_name = "Panel Status"
         self._attr_unique_id = f"{config_entry.entry_id}_panel_status"
 
     @property

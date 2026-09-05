@@ -8,9 +8,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from elkm1_lib import Elk
-from elkm1_lib.const import ArmLevel
-from elkm1_lib.message import as_encode, az_encode, cs_encode, lw_encode, ss_encode
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import (
@@ -36,9 +33,15 @@ from .const import (
     CONNECTION_NETWORK,
     CONNECTION_SERIAL,
     COORDINATOR_UPDATE_INTERVAL,
+    DOMAIN,
     EVENT_ELKM1_KEYPAD_KEY_PRESSED,
+    EVENT_ELKM1_LOG_EVENT,
     EVENT_ELKM1_USER_CODE_ENTERED,
 )
+from .event_log import describe_elk_event
+from .helpers.elk import Elk
+from .helpers.elk.const import ArmLevel
+from .helpers.elk.message import as_encode, az_encode, cs_encode, lw_encode, ss_encode
 from .helpers.transport import DEFAULT_HEARTBEAT_TIMEOUT, HEARTBEAT_MARGIN, ElkConnectionManager
 from .helpers.troublestatus import (
     normalize_trouble_status,
@@ -196,6 +199,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         self._connection_manager = manager
 
         elk.add_handler("EE", self._handle_timer_event)
+        elk.add_handler("LD", self._handle_log_event)
         elk.add_handler("IC", self._handle_user_code)
         elk.add_handler("AM", self._handle_alarm_memory)
         elk.add_handler("SS", self._handle_trouble_status)
@@ -219,6 +223,13 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             if succeeded:
                 login_succeeded_event.set()
                 if self._elk is not None and self._elk.is_connected():
+                    # log-when-unavailable (quality_scale.yaml): async_set_update_error
+                    # already logs the initial "unavailable" transition once; this is
+                    # the matching one-time "recovered" log for the push-driven login
+                    # path, since only DataUpdateCoordinator's own poll path
+                    # (_async_refresh) logs recovery for us automatically.
+                    if not self.last_update_success:
+                        _LOGGER.info("Elk-M1 connection recovered")
                     self.async_set_updated_data(self._build_normalized_data())
             else:
                 login_failed_event.set()
@@ -251,7 +262,9 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         if failed_task in done:
             await manager.async_stop()
             self._elk = None
-            raise ConfigEntryAuthFailed("Elk-M1 rejected the configured username/password")
+            raise ConfigEntryAuthFailed(
+                translation_domain=DOMAIN, translation_key="invalid_auth"
+            )
 
         if succeeded_task not in done:
             await manager.async_stop()
@@ -308,7 +321,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         """Track the panel's IC (user code) report for the alarm entity's changed_by.
 
         `user` is 0-indexed and negative when the panel reports an invalid code
-        (elkm1_lib's own decode comment); a negative value clears attribution
+        (see helpers/elk/message.py's ic_decode); a negative value clears attribution
         rather than attaching an event to the wrong user. Fires promptly so
         automations (Alarmo sync included) see who armed/disarmed with no poll delay.
         """
@@ -334,7 +347,9 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         bypass_requires_code: bool,
         beep_chime_by_area: tuple[int, ...],
     ) -> None:
-        """Preserve the complete KC status fields omitted by elkm1-lib."""
+        """Preserve the complete v1.90 KC status fields (function-key lights,
+        bypass-requires-code, beep/chime by area) alongside the plain KC
+        keypad/key event - see helpers/elk/message.py's kc_detail_decode."""
         self._keypad_status[keypad] = {
             "function_key_lights": list(function_key_lights),
             "bypass_requires_code": bypass_requires_code,
@@ -385,6 +400,27 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
                 "timer1": timer1,
                 "timer2": timer2,
                 "armed_status": self._get_enum_value(armed_status),
+            },
+        )
+
+    def _handle_log_event(self, area: int, log: dict[str, Any]) -> None:
+        """Fire an HA event for a new system log (LD) entry.
+
+        `log["event"]` is the panel's raw numeric event code (see
+        helpers/elk/message.py's ld_decode); event_log.py translates it to
+        the description Elk's own ElkRP tool shows, since the code alone
+        (e.g. 4176) isn't meaningful to a user. Only sent when G35
+        (Transmit Event Log) is enabled - see docs/protocol.md.
+        """
+        self.hass.bus.async_fire(
+            EVENT_ELKM1_LOG_EVENT,
+            {
+                "area": area + 1,
+                "event": log["event"],
+                "description": describe_elk_event(log["event"]),
+                "number": log["number"],
+                "index": log["index"],
+                "timestamp": log["timestamp"],
             },
         )
 
@@ -596,9 +632,13 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     def _ensure_command_ready(self) -> None:
         """Reject writes that cannot currently reach the panel."""
         if self._elk is None or not self._elk.is_connected():
-            raise HomeAssistantError("ELK-M1 command rejected: panel is disconnected")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="panel_disconnected"
+            )
         if self._elk.is_paused():
-            raise HomeAssistantError("ELK-M1 command rejected: ELKRP has paused automation traffic")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="elkrp_paused"
+            )
 
     async def async_queue_command(self, sender: Callable[[], None], description: str) -> bool:
         """Queue a command for which the ELK protocol defines no acknowledgement."""
@@ -606,7 +646,11 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         try:
             sender()
         except Exception as err:
-            raise HomeAssistantError(f"Unable to queue ELK-M1 {description}: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="queue_command_failed",
+                translation_placeholders={"description": description, "error": str(err)},
+            ) from err
         await asyncio.sleep(0)
         return True
 
@@ -634,12 +678,21 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         except TimeoutError as err:
             self.last_command_timeout = response_command
             raise HomeAssistantError(
-                f"ELK-M1 {description} was not confirmed by a valid {response_command} response"
+                translation_domain=DOMAIN,
+                translation_key="command_not_confirmed",
+                translation_placeholders={
+                    "description": description,
+                    "response_command": response_command,
+                },
             ) from err
         except HomeAssistantError:
             raise
         except Exception as err:
-            raise HomeAssistantError(f"Unable to send ELK-M1 {description}: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="send_command_failed",
+                translation_placeholders={"description": description, "error": str(err)},
+            ) from err
         finally:
             self._elk.remove_handler(response_command, _response_handler)
         self.last_command_timeout = None
@@ -679,12 +732,16 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
 
     async def async_alarm_trigger(self, area_index: int, code: int = 0) -> bool:
         """Reject panic control, which the third-party protocol does not provide."""
-        raise HomeAssistantError("ELK-M1 protocol v1.90 provides no third-party panic command")
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="panic_not_supported"
+        )
 
     async def _execute_arm_cmd(self, level: ArmLevel, area_index: int, code: int = 0) -> bool:
-        """Arm/disarm an area using elkm1_lib's own checksummed Area helpers."""
+        """Arm/disarm an area using helpers/elk's own checksummed Area helpers."""
         if not self._elk:
-            raise HomeAssistantError("ELK-M1 panel is unavailable")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="panel_unavailable"
+            )
         active_pin = code if code > 0 else int(self._pin or 0)
         area = cast(Any, self._elk.areas[area_index])
         expected = level.value
@@ -707,7 +764,9 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     async def bypass_zone(self, zone_number: int, pin_code: str | None = None) -> bool:
         """Bypass a zone (1-indexed, matching the panel's own numbering)."""
         if not self._elk:
-            raise HomeAssistantError("ELK-M1 panel is unavailable")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="panel_unavailable"
+            )
         active_pin = int(pin_code) if pin_code else int(self._pin or 0)
         zone_index = zone_number - 1
         zone = cast(Any, self._elk.zones[zone_index])
@@ -729,7 +788,9 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     async def trigger_zone(self, zone_number: int) -> bool:
         """Trigger a zone; the protocol defines no direct acknowledgement."""
         if not self._elk:
-            raise HomeAssistantError("ELK-M1 panel is unavailable")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="panel_unavailable"
+            )
         zone = cast(Any, self._elk.zones[zone_number - 1])
         return await self.async_queue_command(
             zone.trigger, f"zone {zone_number} trigger (unconfirmed)"
@@ -738,7 +799,9 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     async def bypass_area(self, area_index: int, pin_code: str | None = None) -> bool:
         """Bypass all violated burglar zones in an area with ``zb999``."""
         if not self._elk:
-            raise HomeAssistantError("ELK-M1 panel is unavailable")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="panel_unavailable"
+            )
         active_pin = int(pin_code) if pin_code else int(self._pin or 0)
         area = cast(Any, self._elk.areas[area_index])
         return await self.async_confirm_command(
@@ -751,7 +814,9 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     async def clear_bypass_area(self, area_index: int, pin_code: str | None = None) -> bool:
         """Clear all burglar-zone bypasses in an area with ``zb000``."""
         if not self._elk:
-            raise HomeAssistantError("ELK-M1 panel is unavailable")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="panel_unavailable"
+            )
         active_pin = int(pin_code) if pin_code else int(self._pin or 0)
         area = cast(Any, self._elk.areas[area_index])
         return await self.async_confirm_command(
@@ -767,12 +832,20 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         line1: str = "",
         line2: str = "",
         beep: bool = False,
-        clear: int = 0,
+        clear: int = 1,
         timeout: int = 0,
     ) -> bool:
-        """Display a message on all keypads in an area via Area.display_message()."""
+        """Display a message on all keypads in an area via Area.display_message().
+
+        clear defaults to 1 ("clear message with * key"), not the protocol
+        doc's own first-listed value 0: live-tested against a real panel, 0
+        and 2 both showed nothing on the keypad and only 1 displayed the
+        message. See docs/live_qualification.md.
+        """
         if not self._elk:
-            raise HomeAssistantError("ELK-M1 panel is unavailable")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="panel_unavailable"
+            )
         area = cast(Any, self._elk.areas[area_index])
         return await self.async_queue_command(
             lambda: area.display_message(clear, beep, timeout, line1, line2),
@@ -782,21 +855,27 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
     async def speak_word(self, word: int) -> bool:
         """Speak a single word from the panel's voice vocabulary."""
         if not self._elk or self._elk.panel is None:
-            raise HomeAssistantError("ELK-M1 panel is unavailable")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="panel_unavailable"
+            )
         panel = self._elk.panel
         return await self.async_queue_command(lambda: panel.speak_word(word), "speak word")
 
     async def speak_phrase(self, phrase: int) -> bool:
         """Speak a phrase from the panel's voice vocabulary."""
         if not self._elk or self._elk.panel is None:
-            raise HomeAssistantError("ELK-M1 panel is unavailable")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="panel_unavailable"
+            )
         panel = self._elk.panel
         return await self.async_queue_command(lambda: panel.speak_phrase(phrase), "speak phrase")
 
     async def set_panel_time(self, when: datetime | None = None) -> bool:
         """Write the panel's real-time clock (defaults to the current time)."""
         if not self._elk or self._elk.panel is None:
-            raise HomeAssistantError("ELK-M1 panel is unavailable")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="panel_unavailable"
+            )
         panel = self._elk.panel
         return await self.async_confirm_command(lambda: panel.set_time(when), "RR", "clock update")
 

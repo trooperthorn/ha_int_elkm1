@@ -34,7 +34,7 @@ TROUBLE_DETAIL_INDICES = frozenset((1, 5, 18, 20, 33))
 
 
 def normalize_trouble_status(raw_status: str) -> str:
-    """Return the 34 status bytes, excluding elkm1-lib's reserved ``00``."""
+    """Return the 34 status bytes, excluding the wire frame's reserved ``00``."""
     return raw_status[:34]
 
 

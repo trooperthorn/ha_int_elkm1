@@ -1,0 +1,19 @@
+{
+  "entity": {
+    "number": {
+      "counter": {
+        "default": "mdi:counter"
+      }
+    },
+    "sensor": {
+      "active_zones": {
+        "default": "mdi:shield-alert-outline"
+      }
+    },
+    "switch": {
+      "arm_system_request": {
+        "default": "mdi:shield-sync"
+      }
+    }
+  }
+}

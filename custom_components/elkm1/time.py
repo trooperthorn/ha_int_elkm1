@@ -6,7 +6,6 @@ import logging
 from datetime import time as dt_time
 from typing import Any, override
 
-from elkm1_lib.const import SettingFormat
 from homeassistant.components.time import TimeEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -14,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import ElkDataUpdateCoordinator
 from .entity import ElkEntity, async_add_dynamic_entities
+from .helpers.elk.const import SettingFormat
 from .models import ElkRuntimeData
 
 _LOGGER = logging.getLogger(__name__)

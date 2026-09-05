@@ -9,8 +9,8 @@ import asyncio
 import logging
 
 import serialx
-from elkm1_lib.message import decode, vn_encode
 
+from .elk.message import checksum, decode, vn_encode
 from .framing import MAX_FRAME_CHARS, extract_frames
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,14 +38,9 @@ class BaudProbeError(Exception):
     """Raised when no standard baud rate produced a valid panel reply."""
 
 
-def _checksum(msg: str) -> str:
-    """Two's-complement mod-256 checksum, matching elkm1_lib.Connection._write_stream."""
-    return f"{(256 - sum(ord(c) for c in msg)) % 256:02X}"
-
-
 def _build_vn_command() -> bytes:
     encoded = vn_encode()
-    return f"{encoded.message}{_checksum(encoded.message)}\r\n".encode()
+    return f"{encoded.message}{checksum(encoded.message)}\r\n".encode()
 
 
 async def _try_baud(

@@ -1,4 +1,6 @@
-"""ELK M1 protocol semantics not safely represented by elkm1-lib 2.2.15."""
+"""ELK M1 protocol semantics that need care beyond a plain int/enum cast
+(wire values that must stay single characters, symbol sets for alarm-state
+classification)."""
 
 from __future__ import annotations
 

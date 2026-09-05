@@ -7,13 +7,13 @@ import logging
 from dataclasses import asdict
 from urllib.parse import urlsplit, urlunsplit
 
-from elkm1_lib.discovery import AIOELKDiscovery, ElkSystem
 from homeassistant import config_entries
 from homeassistant.components import network
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, discovery_flow
 
 from .const import CONF_HOST, CONF_MAC_ADDRESS, DISCOVER_SCAN_TIMEOUT, DOMAIN
+from .helpers.elk.discovery import AIOELKDiscovery, ElkSystem
 
 _LOGGER = logging.getLogger(__name__)
 

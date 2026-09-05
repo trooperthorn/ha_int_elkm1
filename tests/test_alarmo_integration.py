@@ -39,6 +39,25 @@ async def test_auto_setup_finds_zone_by_unique_id_not_entity_id(hass):
     await hass.services.async_call("elkm1", "alarmo_auto_setup", {}, blocking=True)
 
 
+async def test_auto_setup_warns_when_alarmo_is_not_installed(hass):
+    """A real zone is found, but Alarmo itself isn't installed - must hit the
+    dedicated "Alarmo not found" branch, not the "no zones" one."""
+    await async_setup_alarmo_auto_config(hass)
+
+    entity_reg = er.async_get(hass)
+    entity_reg.async_get_or_create(
+        "binary_sensor",
+        "elkm1",
+        "abcdef123456_zone_1",
+        suggested_object_id="front_door",
+    )
+
+    result = await hass.services.async_call(
+        "elkm1", "alarmo_auto_setup", {}, blocking=True
+    )
+    assert result is None
+
+
 async def test_auto_setup_ignores_non_zone_binary_sensors(hass):
     """A trouble-condition binary_sensor (unique_id has _trouble_, not _zone_) is not reported as a zone."""
     await async_setup_alarmo_auto_config(hass)

@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Any, override
 
-from elkm1_lib.const import ThermostatFan, ThermostatMode, ThermostatSetting
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.config_entries import ConfigEntry
@@ -15,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import ElkDataUpdateCoordinator
 from .entity import ElkEntity, async_add_dynamic_entities
+from .helpers.elk.const import ThermostatFan, ThermostatMode, ThermostatSetting
 from .models import ElkRuntimeData
 
 _LOGGER = logging.getLogger(__name__)

@@ -47,7 +47,7 @@ class AreaData:
 class ElkPanelData:
     """Typed snapshot of Elk-M1 panel state, as built by the coordinator.
 
-    Element lists are references to elkm1_lib's live objects, not copies.
+    Element lists are references to helpers.elk's live objects, not copies.
     """
 
     panel_version: str | None = None
@@ -81,6 +81,3 @@ class ElkPanelData:
     panel_temperature: float | None = None
     fire_alarm_active: bool = False
     bypassed_zones: list[str] = field(default_factory=list)
-
-
-ELKM1Data = ElkRuntimeData

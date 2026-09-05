@@ -1,20 +1,23 @@
-"""Entry-owned transport lifecycle for Elk-M1 connections."""
+"""Entry-owned transport lifecycle for Elk-M1 connections.
+
+Drives `helpers/elk/connection.py`'s `Connection` directly - no more
+monkey-patching another package's bound methods, since this repo now owns
+`Connection` itself (see docs/decisions.md 2026-09-05).
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from contextlib import suppress
-from types import MethodType
 from typing import Any
 
-from elkm1_lib import Elk
-from elkm1_lib.connection import Connection, QueuedWrite
-from elkm1_lib.message import MessageEncode, decode, get_elk_command
-from elkm1_lib.util import parse_url
-
 from .baud_probe import BaudProbeError, open_probed_serial, probe_baud
-from .framing import MAX_FRAME_CHARS, extract_frames, has_valid_length_and_checksum
+from .elk import Elk
+from .elk.connection import Connection
+from .elk.message import decode, kc_detail_decode
+from .elk.util import parse_url
+from .framing import MAX_FRAME_CHARS, extract_frames
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,14 +28,6 @@ MAX_RETRY_DELAY = 60
 DEFAULT_HEARTBEAT_TIMEOUT = 120.0
 HEARTBEAT_MARGIN = 30.0
 
-# elkm1-lib 2.2.15 lacks these reply codes; applied per connection, never to the library globally.
-RESPONSE_COMMAND_OVERRIDES: dict[str, str] = {
-    "cw": "CR",
-    "rw": "RR",
-    "tr": "TR",
-    "ts": "TR",
-}
-
 
 class ConnectionTimeoutError(Exception):
     """A validation connection never received an ELK response."""
@@ -42,83 +37,14 @@ class InvalidAuthError(Exception):
     """A secure M1XEP rejected the supplied credentials."""
 
 
-def _entry_send(connection: Connection, msg: MessageEncode, priority_send: bool = False) -> None:
-    """Queue a checksummed message, rejecting unavailable transports explicitly."""
-    if connection._paused:
-        raise ConnectionError("ELK-M1 command rejected while ELKRP has the panel paused")
-    if connection._writer is None:
-        raise ConnectionError("ELK-M1 command rejected because the transport is disconnected")
-
-    command = msg.message[2:4]
-    response = msg.response_command or RESPONSE_COMMAND_OVERRIDES.get(command)
-    connection._send(QueuedWrite(msg.message, response), priority_send)
-
-
-def _entry_send_raw(connection: Connection, msg: str) -> None:
-    """Queue an authentication/raw line without silently dropping it."""
-    if connection._paused:
-        raise ConnectionError("ELK-M1 raw command rejected while the transport is paused")
-    if connection._writer is None:
-        raise ConnectionError("ELK-M1 raw command rejected because the transport is disconnected")
-    connection._send(QueuedWrite(msg, None, raw=True), False)
-
-
-def _decode_all_lights_frame(line: str) -> tuple[str, dict[str, Any]] | None:
-    """Decode the valid PC house/unit 00 aggregate form rejected by elkm1-lib."""
-    if (
-        get_elk_command(line) != "PC"
-        or len(line) < 9
-        or line[5:7] != "00"
-        or not has_valid_length_and_checksum(line)
-    ):
-        return None
-    house = line[4].upper()
-    if house < "A" or house > "P":
-        return None
-    try:
-        aggregate_code = int(line[7:9])
-    except ValueError:
-        return None
-    return (
-        "PC_ALL",
-        {
-            "house_index": ord(house) - ord("A"),
-            "aggregate_code": aggregate_code,
-        },
-    )
-
-
-def _decode_keypad_detail(line: str) -> tuple[str, dict[str, Any]] | None:
-    """Decode the KC fields elkm1-lib 2.2.15 currently discards."""
-    if get_elk_command(line) != "KC" or len(line) < 27:
-        return None
-    try:
-        keypad = int(line[4:6]) - 1
-        key = int(line[6:8])
-        function_key_lights = tuple(int(value) for value in line[8:14])
-        beep_chime_by_area = tuple(int(value, 16) for value in line[15:23])
-    except ValueError:
-        return None
-    return (
-        "KC_DETAIL",
-        {
-            "keypad": keypad,
-            "key": key,
-            "function_key_lights": function_key_lights,
-            "bypass_requires_code": line[14] == "1",
-            "beep_chime_by_area": beep_chime_by_area,
-        },
-    )
-
-
 async def _entry_read_stream(connection: Connection, reader: asyncio.StreamReader) -> None:
-    """Read, validate, correlate, and dispatch all manufacturer-valid frames."""
+    """Read, validate, correlate, and dispatch every manufacturer-valid frame."""
     read_buffer = ""
     while True:
         data = await reader.read(500)
         if not data:
             break
-        connection._heartbeat()
+        connection.heartbeat()
         read_buffer += data.decode("ISO-8859-1")
         frames, read_buffer = extract_frames(read_buffer)
         if len(read_buffer) > MAX_FRAME_CHARS:
@@ -133,56 +59,53 @@ async def _entry_read_stream(connection: Connection, reader: asyncio.StreamReade
             try:
                 decoded = decode(line)
             except (ValueError, AttributeError) as err:
-                decoded = _decode_all_lights_frame(line)
-                if decoded is None:
-                    _LOGGER.error("Invalid ELK-M1 message '%s': %s", line, err)
-                    continue
+                _LOGGER.error("Invalid ELK-M1 message '%s': %s", line, err)
+                continue
 
             if decoded is None:
                 continue
 
-            # Publish supplemental KC data before the library's KC callback so the key event is complete.
-            if detail := _decode_keypad_detail(line):
-                connection._notifier.notify(detail[0], detail[1])
+            # Publish the full v1.90 KC fields before the plain KC callback,
+            # so the key event is complete by the time it's read.
+            if detail := kc_detail_decode(line):
+                connection._notifier.notify("KC_DETAIL", detail)
 
             command, payload = decoded
-            if command == connection._awaiting_response_command:
+            if command == connection.awaiting_response_command:
                 # Correlation happens only after full length/checksum/decode success.
-                connection._response_received.set()
+                connection.response_received.set()
             connection._notifier.notify(command, payload)
 
 
 async def _entry_connect(connection: Connection) -> None:
     """Own one entry's open, stream supervision, and reconnect loop."""
-    _LOGGER.info("Connecting to ElkM1 at %s", connection._url)
-    scheme, dest, param, ssl_context = parse_url(connection._url)
-    cached_baud: int | None = getattr(connection, "_elkm1ha_cached_baud", None)
+    _LOGGER.info("Connecting to ElkM1 at %s", connection.url)
+    scheme, dest, param, ssl_context = parse_url(connection.url)
+    cached_baud: int | None = connection.cached_baud
 
     while True:
-        retry_delay = int(getattr(connection, "_elkm1ha_retry_delay", INITIAL_RETRY_DELAY))
+        retry_delay = connection.retry_delay
         try:
             async with asyncio.timeout(30):
                 if scheme == "serial":
-                    baud, reader, connection._writer = await open_probed_serial(dest, cached_baud)
-                    connection._elkm1ha_cached_baud = baud  # type: ignore[attr-defined]
+                    baud, reader, connection.writer = await open_probed_serial(dest, cached_baud)
+                    connection.cached_baud = baud
                     cached_baud = baud
-                    if callback := getattr(connection, "_elkm1ha_on_baud_detected", None):
-                        callback(baud)
+                    if connection.on_baud_detected:
+                        connection.on_baud_detected(baud)
                 else:
-                    reader, connection._writer = await asyncio.open_connection(
+                    reader, connection.writer = await asyncio.open_connection(
                         host=dest, port=param, ssl=ssl_context
                     )
         except asyncio.CancelledError:
             raise
         except (TimeoutError, ValueError, OSError, BaudProbeError) as err:
             next_delay = min(MAX_RETRY_DELAY, retry_delay * 2)
-            connection._elkm1ha_retry_delay = next_delay  # type: ignore[attr-defined]
-            if callback := getattr(connection, "_elkm1ha_on_failure", None):
-                callback(_failure_category(err), str(err))
+            connection.retry_delay = next_delay
+            if connection.on_failure:
+                connection.on_failure(_failure_category(err), str(err))
             _LOGGER.warning(
-                "Error connecting to ElkM1 (%s). Retrying in %d seconds",
-                err,
-                retry_delay,
+                "Error connecting to ElkM1 (%s). Retrying in %d seconds", err, retry_delay
             )
             await asyncio.sleep(retry_delay)
             continue
@@ -195,9 +118,9 @@ async def _entry_connect(connection: Connection) -> None:
             stream_tasks.add(
                 asyncio.create_task(_entry_heartbeat(connection), name="elkm1-heartbeat")
             )
-        connection._tasks.update(stream_tasks)
-        if callback := getattr(connection, "_elkm1ha_on_transport_connected", None):
-            callback()
+        connection.tasks.update(stream_tasks)
+        if connection.on_transport_connected:
+            connection.on_transport_connected()
         connection._notifier.notify("connected", {})
 
         failure: BaseException | None = None
@@ -215,25 +138,22 @@ async def _entry_connect(connection: Connection) -> None:
 
         await _async_close_transport(connection, stream_tasks)
         connection._notifier.notify("disconnected", {})
-        if callback := getattr(connection, "_elkm1ha_on_failure", None):
-            callback(_failure_category(failure), str(failure))
-        retry_delay = int(getattr(connection, "_elkm1ha_retry_delay", INITIAL_RETRY_DELAY))
-        connection._elkm1ha_retry_delay = min(  # type: ignore[attr-defined]
-            MAX_RETRY_DELAY, retry_delay * 2
-        )
-        await asyncio.sleep(retry_delay)
+        if connection.on_failure:
+            connection.on_failure(_failure_category(failure), str(failure))
+        connection.retry_delay = min(MAX_RETRY_DELAY, connection.retry_delay * 2)
+        await asyncio.sleep(connection.retry_delay)
 
 
 async def _entry_heartbeat(connection: Connection) -> None:
     """Supervise heartbeat without allowing a child task to reconnect."""
-    timeout = getattr(connection, "_elkm1ha_heartbeat_timeout", DEFAULT_HEARTBEAT_TIMEOUT)
-    while connection._writer:
-        connection._heartbeat_event.clear()
+    timeout = connection.heartbeat_timeout
+    while connection.writer:
+        connection.heartbeat_event.clear()
         try:
             async with asyncio.timeout(timeout):
-                await connection._heartbeat_event.wait()
+                await connection.heartbeat_event.wait()
         except TimeoutError:
-            if connection._paused:
+            if connection.is_paused():
                 continue
             raise ConnectionError("ELK heartbeat timed out") from None
 
@@ -246,10 +166,10 @@ async def _async_close_transport(connection: Connection, tasks: set[asyncio.Task
             task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
-    connection._tasks.difference_update(tasks)
+    connection.tasks.difference_update(tasks)
 
-    writer = connection._writer
-    connection._writer = None
+    writer = connection.writer
+    connection.writer = None
     if writer is not None:
         writer.close()
         wait_closed = getattr(writer, "wait_closed", None)
@@ -291,26 +211,13 @@ class ElkConnectionManager:
         self.last_failure: str | None = None
         self.detected_baud = cached_baud
 
-        self.connection.connect = MethodType(  # type: ignore[method-assign]
-            _entry_connect, self.connection
-        )
-        self.connection.send = MethodType(  # type: ignore[method-assign]
-            _entry_send, self.connection
-        )
-        self.connection.send_raw = MethodType(  # type: ignore[method-assign]
-            _entry_send_raw, self.connection
-        )
-        self.connection._elkm1ha_retry_delay = INITIAL_RETRY_DELAY  # type: ignore[attr-defined]
-        self.connection._elkm1ha_heartbeat_timeout = heartbeat_timeout  # type: ignore[attr-defined]
-        self.connection._elkm1ha_on_failure = self._on_failure  # type: ignore[attr-defined]
-        self.connection._elkm1ha_on_transport_connected = (  # type: ignore[attr-defined]
-            self._on_transport_connected
-        )
+        self.connection.retry_delay = INITIAL_RETRY_DELAY
+        self.connection.heartbeat_timeout = heartbeat_timeout
+        self.connection.on_failure = self._on_failure
+        self.connection.on_transport_connected = self._on_transport_connected
         if cached_baud is not None:
-            self.connection._elkm1ha_cached_baud = cached_baud  # type: ignore[attr-defined]
-        self.connection._elkm1ha_on_baud_detected = (  # type: ignore[attr-defined]
-            self._wrap_baud_callback(on_baud_detected)
-        )
+            self.connection.cached_baud = cached_baud
+        self.connection.on_baud_detected = self._wrap_baud_callback(on_baud_detected)
 
     def _wrap_baud_callback(self, callback: Any) -> Any:
         def _detected(baud: int) -> None:
@@ -340,7 +247,7 @@ class ElkConnectionManager:
         """Record login state and reset backoff only after accepted login."""
         self.login_state = "authenticated" if succeeded else "rejected"
         if succeeded:
-            self.connection._elkm1ha_retry_delay = INITIAL_RETRY_DELAY  # type: ignore[attr-defined]
+            self.connection.retry_delay = INITIAL_RETRY_DELAY
             self.last_failure_category = None
             self.last_failure = None
         else:
@@ -352,7 +259,7 @@ class ElkConnectionManager:
         if self._connect_task is None or self._connect_task.done():
             self.transport_state = "connecting"
             self._connect_task = asyncio.create_task(
-                self.connection.connect(), name="elkm1-connect"
+                _entry_connect(self.connection), name="elkm1-connect"
             )
         return self._connect_task
 
@@ -366,9 +273,9 @@ class ElkConnectionManager:
             with suppress(asyncio.CancelledError):
                 await connect_task
 
-        connection_tasks = set(self.connection._tasks)
-        if self.connection._writer is not None or connection_tasks:
-            writer = self.connection._writer
+        connection_tasks = set(self.connection.tasks)
+        if self.connection.writer is not None or connection_tasks:
+            writer = self.connection.writer
             self.connection.disconnect()
             if connection_tasks:
                 await asyncio.gather(*connection_tasks, return_exceptions=True)

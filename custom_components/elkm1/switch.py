@@ -7,7 +7,6 @@ from datetime import timedelta
 from math import ceil
 from typing import Any, override
 
-from elkm1_lib.const import ThermostatMode, ThermostatSetting
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -15,8 +14,10 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import DOMAIN
 from .coordinator import ElkDataUpdateCoordinator
 from .entity import ElkEntity, async_add_dynamic_entities, create_elk_system_device_info
+from .helpers.elk.const import ThermostatMode, ThermostatSetting
 from .models import ElkRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,8 +76,8 @@ async def async_setup_entry(
 class ElkArmRequestSwitch(ElkEntity, SwitchEntity):
     """Native proxy switch for triggering pre-arm validation automations."""
 
-    _attr_icon = "mdi:shield-sync"
     _attr_should_poll = False
+    _attr_translation_key = "arm_system_request"
 
     def __init__(self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry) -> None:
         """Initialize the arm request proxy switch."""
@@ -84,7 +85,6 @@ class ElkArmRequestSwitch(ElkEntity, SwitchEntity):
         self._prefix = config_entry.data.get("prefix", "")
         self._mac = config_entry.unique_id
 
-        self._attr_name = "Arm System Request"
         self._attr_unique_id = f"elkm1_{self._prefix}_arm_request".lower()
         self._attr_is_on = False
 
@@ -173,7 +173,14 @@ class ElkOutput(ElkEntity, SwitchEntity):
 
 
 class ElkThermostatEMHeat(ElkEntity, SwitchEntity):
-    """Elk Thermostat emergency heat as switch."""
+    """Elk Thermostat emergency heat as switch.
+
+    Not translation_key-named: `Entity.translation_placeholders` is a `@final`
+    `cached_property` (computed once, then frozen for the entity's lifetime),
+    but the panel-reported thermostat name this entity's display name embeds
+    can arrive after entity creation. A live `name` override is the only way
+    to keep that name current. See docs/decisions.md.
+    """
 
     def __init__(
         self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int
@@ -235,13 +242,21 @@ class ElkThermostatEMHeat(ElkEntity, SwitchEntity):
 
     async def async_switch_output_turn_on_for(self, duration: timedelta) -> None:
         """Not supported for thermostat."""
-        raise HomeAssistantError("supported only on ElkM1 output switch entities")
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="output_switch_only"
+        )
 
 
 class ElkZoneBypassSwitch(ElkEntity, SwitchEntity):
     """Representation of an Elk-M1 zone's bypass state as a switch.
 
     `zb` is a toggle, so turn_on/turn_off only send it when the state differs.
+
+    Not translation_key-named: `Entity.translation_placeholders` is a `@final`
+    `cached_property` (computed once, then frozen for the entity's lifetime),
+    but the panel-reported zone name this entity's display name embeds can
+    arrive after entity creation. A live `name` override is the only way to
+    keep that name current. See docs/decisions.md.
     """
 
     _attr_entity_category = None

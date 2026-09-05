@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from custom_components.elkm1.helpers.panel_settings import (
     check_panel_version,
     check_required_settings,
+    verify_panel_configuration,
 )
 
 
@@ -88,3 +89,103 @@ async def test_check_required_settings_reports_unconfirmed_by_default() -> None:
     assert status[36]["broadcast_count"] == 3
     assert status[37]["enabled"] is False
     assert status[37]["broadcast_count"] == 0
+
+
+async def test_check_panel_version_returns_none_and_logs_on_unexpected_error() -> None:
+    coordinator = SimpleNamespace(data=None)  # .panel_version raises AttributeError
+
+    result = await check_panel_version(coordinator)
+
+    assert result is None
+
+
+async def test_verify_panel_configuration_reports_configured_when_version_found() -> None:
+    coordinator = SimpleNamespace(
+        data=_coordinator("5.2.0").data,
+        broadcast_counts={"ZC": 1},
+        hass=MagicMock(),
+        config_entry=SimpleNamespace(entry_id="entry1"),
+    )
+
+    with (
+        patch("custom_components.elkm1.helpers.panel_settings.asyncio.sleep", AsyncMock()),
+        patch("custom_components.elkm1.helpers.panel_settings.ir.async_create_issue"),
+        patch("custom_components.elkm1.helpers.panel_settings.ir.async_delete_issue"),
+    ):
+        is_configured, details = await verify_panel_configuration(coordinator)
+
+    assert is_configured is True
+    assert details["version"] == "5.2.0"
+    assert details["configured"] is True
+    assert details["settings"][36]["enabled"] is True
+    assert details["settings"][37]["enabled"] is False
+
+
+async def test_verify_panel_configuration_reports_not_configured_without_version() -> None:
+    coordinator = SimpleNamespace(
+        data=_coordinator(None).data,
+        broadcast_counts={},
+        hass=MagicMock(),
+        config_entry=SimpleNamespace(entry_id="entry1"),
+    )
+
+    with (
+        patch("custom_components.elkm1.helpers.panel_settings.asyncio.sleep", AsyncMock()),
+        patch("custom_components.elkm1.helpers.panel_settings.ir.async_create_issue"),
+        patch("custom_components.elkm1.helpers.panel_settings.ir.async_delete_issue"),
+    ):
+        is_configured, details = await verify_panel_configuration(coordinator)
+
+    assert is_configured is False
+    assert details["version"] is None
+    assert details["configured"] is False
+
+
+async def test_verify_panel_configuration_creates_a_repair_issue_when_unconfirmed() -> None:
+    coordinator = SimpleNamespace(
+        data=_coordinator("5.2.0").data,
+        broadcast_counts={},
+        hass=MagicMock(),
+        config_entry=SimpleNamespace(entry_id="entry1"),
+    )
+
+    with (
+        patch("custom_components.elkm1.helpers.panel_settings.asyncio.sleep", AsyncMock()),
+        patch(
+            "custom_components.elkm1.helpers.panel_settings.ir.async_create_issue"
+        ) as create_issue,
+        patch(
+            "custom_components.elkm1.helpers.panel_settings.ir.async_delete_issue"
+        ) as delete_issue,
+    ):
+        await verify_panel_configuration(coordinator)
+
+    create_issue.assert_called_once()
+    delete_issue.assert_not_called()
+    assert create_issue.call_args.kwargs["translation_key"] == "outdated_panel_broadcasts"
+    assert create_issue.call_args.args[2] == "outdated_panel_broadcasts_entry1"
+
+
+async def test_verify_panel_configuration_deletes_the_repair_issue_once_confirmed() -> None:
+    coordinator = SimpleNamespace(
+        data=_coordinator("5.2.0").data,
+        broadcast_counts={"LD": 1, "ZC": 1, "CC": 1, "TC": 1, "PC": 1, "KC": 1},
+        hass=MagicMock(),
+        config_entry=SimpleNamespace(entry_id="entry1"),
+    )
+
+    with (
+        patch("custom_components.elkm1.helpers.panel_settings.asyncio.sleep", AsyncMock()),
+        patch(
+            "custom_components.elkm1.helpers.panel_settings.ir.async_create_issue"
+        ) as create_issue,
+        patch(
+            "custom_components.elkm1.helpers.panel_settings.ir.async_delete_issue"
+        ) as delete_issue,
+    ):
+        await verify_panel_configuration(coordinator)
+
+    create_issue.assert_not_called()
+    delete_issue.assert_called_once_with(
+        coordinator.hass, "elkm1", "outdated_panel_broadcasts_entry1"
+    )
