@@ -25,6 +25,8 @@ Test data sources, in order of preference:
 from __future__ import annotations
 
 import datetime as dt
+import os
+import time
 
 import pytest
 
@@ -559,19 +561,36 @@ def test_st_decode_real_panel_capture_no_probe_enrolled():
 
 
 def test_ld_decode_real_panel_capture():
-    frame = "1CLD1159001100000905001726004C"
-    assert message.decode(frame) == (
-        "LD",
-        {
-            "area": 0,
-            "log": {
-                "event": 1159,
-                "number": 1,
-                "index": 1,
-                "timestamp": "2026-09-05T05:00:00+00:00",
+    """ld_decode() has no timezone field on the wire - it converts the
+    panel's local wall-clock time to UTC using the host machine's own local
+    timezone (the documented assumption for a locally-installed HA instance).
+    This real hardware capture was taken at UTC-5 (fixed offset, no DST), so
+    the test pins TZ to that offset rather than depending on whatever
+    timezone happens to run the suite.
+    """
+    original_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "Etc/GMT+5"
+    time.tzset()
+    try:
+        frame = "1CLD1159001100000905001726004C"
+        assert message.decode(frame) == (
+            "LD",
+            {
+                "area": 0,
+                "log": {
+                    "event": 1159,
+                    "number": 1,
+                    "index": 1,
+                    "timestamp": "2026-09-05T05:00:00+00:00",
+                },
             },
-        },
-    )
+        )
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        time.tzset()
 
 
 # --------------------------------------------------------------------------
