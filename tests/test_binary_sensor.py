@@ -4,7 +4,7 @@ point - see docs/cross_integration.md).
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from custom_components.elkm1.binary_sensor import (
     _DEVICE_CLASS_MAP,
@@ -12,6 +12,7 @@ from custom_components.elkm1.binary_sensor import (
     ElkAreaOpeningsBinarySensor,
     ElkBinarySensor,
     ElkTroubleBinarySensor,
+    ElkZoneBypassBinarySensor,
     async_setup_entry,
 )
 from custom_components.elkm1.helpers.elk.const import ZoneLogicalStatus, ZoneType
@@ -313,3 +314,79 @@ async def test_temperature_and_analog_zones_get_no_binary_sensor(hass, mock_netw
         e for batch in added_batches for e in batch if getattr(e, "_zone_index", None) == 0
     ]
     assert zone_entities == []
+
+
+def _bypass_status_sensor(index: int, zone_obj) -> ElkZoneBypassBinarySensor:
+    sensor = object.__new__(ElkZoneBypassBinarySensor)
+    sensor._index = index
+    coordinator = MagicMock()
+    coordinator.data = ElkPanelData(zones=[zone_obj])
+    sensor.coordinator = coordinator
+    return sensor
+
+
+def test_zone_bypass_status_is_on_when_bypassed():
+    zone = MagicMock()
+    zone.logical_status = ZoneLogicalStatus.BYPASSED
+    sensor = _bypass_status_sensor(0, zone)
+    assert sensor.is_on is True
+
+
+def test_zone_bypass_status_is_off_when_not_bypassed():
+    zone = MagicMock()
+    zone.logical_status = ZoneLogicalStatus.NORMAL
+    sensor = _bypass_status_sensor(0, zone)
+    assert sensor.is_on is False
+
+
+def test_zone_bypass_status_is_off_without_zone_object():
+    """Index past the end of coordinator.data.zones - no crash, just off."""
+    sensor = _bypass_status_sensor(5, MagicMock())
+    sensor._index = 5
+    sensor.coordinator.data = ElkPanelData(zones=[])
+    assert sensor.is_on is False
+
+
+def test_zone_bypass_status_name_falls_back_when_no_zone_object():
+    sensor = _bypass_status_sensor(2, MagicMock())
+    sensor.coordinator.data = ElkPanelData(zones=[])
+    assert sensor.name == "Zone 3 Bypass"
+
+
+def test_zone_bypass_status_name_suffixes_panel_reported_name():
+    zone = MagicMock()
+    zone.name = "Garage Door"
+    sensor = _bypass_status_sensor(0, zone)
+    assert sensor.name == "Garage Door Bypass"
+
+
+def test_zone_bypass_status_init_sets_unique_id():
+    coordinator = MagicMock()
+    config_entry = MagicMock()
+    config_entry.entry_id = "entry1"
+    sensor = ElkZoneBypassBinarySensor(coordinator, config_entry, 4)
+    assert sensor._index == 4
+    assert sensor._attr_unique_id == "entry1_zone_5_bypass"
+
+
+def test_zone_bypass_status_enum_value_default_for_non_numeric():
+    assert ElkZoneBypassBinarySensor._enum_value("not-a-number", default=9) == 9
+
+
+def test_zone_bypass_status_has_no_write_capability():
+    """This entity must never expose turn_on/turn_off - see its docstring
+    for why a code-less write path here would be a real security gap."""
+    assert not hasattr(ElkZoneBypassBinarySensor, "async_turn_on")
+    assert not hasattr(ElkZoneBypassBinarySensor, "async_turn_off")
+
+
+async def test_binary_sensor_async_zone_bypass_threads_the_caller_supplied_code():
+    """The elkm1.sensor_zone_bypass service (registered on this platform,
+    schema requires `code`) is the only way to bypass a zone this platform
+    covers - it must forward the caller's own code, not fall back silently."""
+    sensor = _binary_sensor(0, [])
+    sensor.coordinator.bypass_zone = AsyncMock()
+
+    await sensor.async_zone_bypass("1234")
+
+    sensor.coordinator.bypass_zone.assert_awaited_once_with(1, "1234")

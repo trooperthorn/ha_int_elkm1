@@ -174,6 +174,12 @@ ENTITY_SERVICES: tuple[tuple[str, str, dict[Any, Any] | None, str], ...] = (
     ("sensor", SERVICE_SENSOR_ZONE_BYPASS, ELK_USER_CODE_SERVICE_SCHEMA, "async_zone_bypass"),
     ("sensor", SERVICE_SENSOR_ZONE_TRIGGER, None, "async_zone_trigger"),
     (
+        "binary_sensor",
+        SERVICE_SENSOR_ZONE_BYPASS,
+        ELK_USER_CODE_SERVICE_SCHEMA,
+        "async_zone_bypass",
+    ),
+    (
         "switch",
         SERVICE_SWITCH_OUTPUT_TURN_ON_FOR,
         ELK_OUTPUT_TURN_ON_FOR_SERVICE_SCHEMA,

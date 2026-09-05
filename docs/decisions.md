@@ -3,6 +3,50 @@
 Dated decisions with the alternative rejected and why. Entries marked "recorded" were
 carried out of code comments on 2026-09-03; the decision itself predates that date.
 
+## 2026-09-05, zone bypass moved off `switch` entirely; unconfigured outputs past 64 no longer get entities
+
+Two findings from reviewing the switch platform after live-hardware testing, both raised
+by Sean directly.
+
+**Outputs 65-208 were registered unconditionally.** `switch.py`'s `async_setup_entry` added
+every output past index 64 as a disabled-by-default entity regardless of whether the panel
+had ever named it, unlike every other element (zones, thermostats, tasks, outputs 1-64
+themselves), which only get an entity once `.configured` is true. That range is rare
+hardware - almost no real panel populates it - so on a typical install this created 144
+disabled, meaningless entities. `helpers/elk/outputs.py`'s `Outputs.sync()` already runs
+the same `get_descriptions()`/`.configured` machinery for the full 1-208 range, so there was
+no technical reason for the special case. Fixed by routing the full `outputs` list through
+`async_add_dynamic_entities`, the same as every other element; the disabled-by-default flag
+for index >= 64 stays, since that range is still unusual hardware worth extra caution even
+when genuinely configured.
+
+**The zone-bypass switch was a real security gap, not just a style question.**
+`ElkZoneBypassSwitch.async_turn_on`/`async_turn_off` called `coordinator.bypass_zone(zone)`
+with no code, which falls back to the PIN stored in the config entry. Home Assistant's
+`switch` entity model has no way to require a code before `turn_on`/`turn_off` runs -
+unlike `alarm_control_panel`, whose Lovelace card can prompt a human for one before
+arm/disarm even reaches the entity. That meant any user with dashboard access, any
+automation, or a compromised Home Assistant instance could silently bypass a zone's alarm
+supervision with a single, unconfirmed toggle - a materially weaker boundary than every
+other security-relevant action this integration exposes, all of which require a real code
+threaded from the caller (`alarm_control_panel.*`, `elkm1.alarm_bypass`/
+`alarm_clear_bypass`, the existing `elkm1.sensor_zone_bypass` service on `sensor` zones).
+
+Considered and rejected: leaving it as a switch and just documenting the risk. A
+dashboard toggle with no prompt is exactly the failure mode - documentation does not
+change what a compromised automation or a careless tap can do.
+
+Fix: removed `ElkZoneBypassSwitch` entirely. Added `ElkZoneBypassBinarySensor`
+(`binary_sensor.py`) as a read-only replacement showing the same bypass status with no
+write capability at all, and extended the existing code-required `elkm1.sensor_zone_bypass`
+service (already registered on `sensor` for temperature/analog zones, schema already
+requires `code`) to also register on `binary_sensor`, via a new `async_zone_bypass` method
+on `ElkBinarySensor`. Bypassing or clearing a zone's bypass now requires that service call
+on every zone type, with no switch-based path at all. This is a breaking change for any
+existing automation or dashboard referencing `switch.elk_m1_*_bypass` - the entity domain
+changes to `binary_sensor` and it can no longer be toggled directly, only observed; the
+replacement action is the service call with an explicit `code`.
+
 ## 2026-09-05, `MESSAGE_RESPONSE_TIME` lowered from 5.0s to 1.5s after a live-hardware incident
 
 `scripts/live_full_verification.py`'s guided write-command pass against the real panel hit

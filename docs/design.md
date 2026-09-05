@@ -122,14 +122,21 @@ setpoints, which is Home Assistant's `HEAT_COOL`, not its own system-decides `AU
 setpoint limits are generic HVAC defaults because the manual documents no panel-enforced
 range.
 
-Outputs 65 through 208 are reported and controllable but carry no panel text descriptions,
-so they are created disabled by default rather than adding 144 generically named entities
-to every panel. Counters and custom values are created only when the panel has given them
-a real name; unnamed slots wait for an options-flow opt-in. Tasks are momentary activations
-of a pre-programmed sequence with no queryable state, which matches scene semantics. The
-zone-bypass switch sends `zb` only when the zone is not already in the requested state,
-because `zb` toggles and there is no separate clear command; the alarm panel's
-`async_alarm_clear_bypass` re-sends the same call for the same reason.
+Outputs 65 through 208 are reported and controllable but almost never physically present;
+like every other element, one only gets an entity once the panel has actually given it a
+name, and outputs past 64 are additionally created disabled by default even then, since
+that range is rare hardware. Counters and custom values are created only when the panel
+has given them a real name; unnamed slots wait for an options-flow opt-in. Tasks are
+momentary activations of a pre-programmed sequence with no queryable state, which matches
+scene semantics. `zb` toggles bypass and has no separate clear command; the alarm panel's
+`async_alarm_clear_bypass` and the `elkm1.sensor_zone_bypass` service both just re-send the
+same call for that reason. Zone bypass is deliberately not a switch: a switch entity has no
+way to require a code before acting, so exposing bypass that way would let anyone with
+dashboard or automation access silently bypass a zone using the panel's stored PIN with no
+confirmation at all - a materially weaker boundary than the alarm panel card, which can at
+least prompt a human for a code. `ElkZoneBypassBinarySensor` shows bypass status read-only;
+actually bypassing or clearing a zone's bypass requires the code-required
+`elkm1.sensor_zone_bypass` service. See `docs/decisions.md` 2026-09-05.
 
 Alarmo auto-setup matches zone sensors by the `_zone_` marker in their unique_id, not by
 entity_id, because the entity_id comes from the panel's zone name (for example
