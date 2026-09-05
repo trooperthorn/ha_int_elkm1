@@ -9,9 +9,11 @@ Wire and device facts live in `protocol.md`; configuration and release operation
 ## Connection and coordinator
 
 The coordinator is `local_push`. Once the panel's Global Programming "Xmit ... Changes"
-settings are enabled it broadcasts state changes on its own; `elkm1_lib` decodes those into
-its typed Zone, Area, Output, and Task objects, the coordinator observes them through
-per-element callbacks, and pushes the snapshot onward with `async_set_updated_data()`. The
+settings are enabled it broadcasts state changes on its own; `helpers/elk/` (this
+integration's own protocol implementation - see `docs/decisions.md` 2026-09-05) decodes
+those into its typed Zone, Area, Output, and Task objects, the coordinator observes them
+through per-element callbacks, and pushes the snapshot onward with
+`async_set_updated_data()`. The
 polling `update_interval` is a bounded AS/AZ/CS/SS/LW safety net, not the primary data path.
 
 Setup waits for the panel's `login` notifier event rather than `connected`. `connected`
@@ -29,9 +31,10 @@ The config flow builds a fully scheme-prefixed URL (`elk://`, `elks://`, `elksv1
 `serial://`), and the coordinator uses it as-is. Re-wrapping it in another scheme was the
 cause of one earlier connection bug.
 
-`elkm1_lib` allocates the hardware-maximum number of every element (eight areas, 208 zones,
-and so on). Only elements that have received real sync data are treated as configured, so
-entity counts reflect the panel rather than the library's ceiling. Names arrive one index at
+`helpers/elk/elements.py`'s `Elements` allocates the hardware-maximum number of every
+element (eight areas, 208 zones, and so on - `helpers/elk/const.py`'s `Max`). Only elements
+that have received real sync data are treated as configured, so entity counts reflect the
+panel rather than that ceiling. Names arrive one index at
 a time through sequential `SD` replies that routinely outlast setup, so every platform adds
 entities through `entity.async_add_dynamic_entities()`, which keeps listening for later
 `SD` replies instead of creating entities in a single pass at platform setup. The test
@@ -41,28 +44,30 @@ is the regression test for the bug that motivated this: zero zone sensors ever a
 Zone voltage is only requested for zones the panel defines as analog (definition 34),
 because `Zones.sync()` never sends `zv` and asking all 208 slots would be wasteful.
 
-The trouble-status handler is registered alongside the library's own `Panel._ss_handler`
-(the notifier supports several handlers per message type) so the coordinator receives the
-raw per-condition string. The library's `Panel` object only exposes a pre-joined display
-string, which loses which individual conditions are active; `helpers/troublestatus.py`
-parses the raw string into one boolean per condition using the same index mapping the
-library uses internally.
+The trouble-status handler is registered alongside `helpers/elk/panel.py`'s own
+`Panel._ss_handler` (the notifier supports several handlers per message type) so the
+coordinator receives the raw per-condition string. The `Panel` object only exposes a
+pre-joined display string, which loses which individual conditions are active;
+`helpers/troublestatus.py` parses the raw string into one boolean per condition using the
+same index mapping `Panel._ss_handler` uses internally.
 
-`ElkPanelData` keeps references to the library's own live element objects rather than a
-second parallel set of dataclasses, because the library objects are the source of truth.
-Only panel-wide aggregates (areas, faulted and active summaries, connection-derived fields)
-are promoted to typed fields, replacing an earlier untyped dictionary with string keys.
+`ElkPanelData` keeps references to `helpers/elk/`'s own live element objects rather than a
+second parallel set of dataclasses, because those objects are the source of truth. Only
+panel-wide aggregates (areas, faulted and active summaries, connection-derived fields) are
+promoted to typed fields, replacing an earlier untyped dictionary with string keys.
 
 ## Transport
 
-`helpers/transport.py` replaces only the bound `connect()` method on each entry's
-`Connection` instance, never the process-global class. The manager supervises open, streams,
+`helpers/transport.py` owns the connect/reconnect/read-loop supervision against
+`helpers/elk/connection.py`'s own `Connection` class - no monkey-patching of any kind, since
+this repository owns `Connection` directly (see `docs/decisions.md` 2026-09-05; this split
+predates that removal and is kept deliberately). The manager supervises open, streams,
 bounded reconnect backoff, cancellation, and awaited close, and adds host-side baud-rate
 detection for serial links. Network links have no baud rate to detect.
 
-Baud detection reuses `elkm1_lib.message`'s `vn_encode()` and `decode()` so the checksum
-and framing logic stays identical to the one place the library already implements it. A
-winning probe hands its open reader and writer back to the caller instead of closing and
+Baud detection reuses `helpers/elk/message.py`'s `vn_encode()` and `decode()` so the
+checksum and framing logic stays identical to the one place this repository implements it.
+A winning probe hands its open reader and writer back to the caller instead of closing and
 reopening the port; the second open wastes a round trip and, on some USB-serial adapters,
 trips DTR-reset or settling quirks. Reconnects try the cached rate first so they lock on
 immediately. `probe_baud` is the validation-only variant for the config flow and USB
@@ -71,12 +76,14 @@ discovery, which need a yes or no and do not keep the connection.
 The network heartbeat window is scaled with the configured poll interval; the reasoning
 and the numbers are in `protocol.md`.
 
-`RESPONSE_COMMAND_OVERRIDES` supplies reply codes that elkm1-lib 2.2.15 omits from its
-encoder metadata, applied per connection so the panel's single command buffer stays
-serialized without changing the library's global state. Supplemental keypad (`KC`) data is
-published before the library's own KC callback so the Home Assistant key event carries the
-complete keypad state, and correlation happens only after a frame passes length, checksum,
-and decode.
+`cw_encode`/`rw_encode`/`tr_encode`/`ts_encode` in `helpers/elk/message.py` declare their
+real reply codes directly (fixed relative to the removed `elkm1-lib` 2.2.15 dependency,
+whose equivalents omitted them from their encoder metadata - see `docs/decisions.md`
+2026-09-05); the `RESPONSE_COMMAND_OVERRIDES` table that used to patch this at the
+transport layer is retired. Supplemental keypad (`KC`) data (`kc_detail_decode`) is
+published before the plain `KC` event so the Home Assistant key event carries the complete
+keypad state, and correlation happens only after a frame passes length, checksum, and
+decode.
 
 ## Panel settings verification
 
@@ -140,9 +147,9 @@ migrated (see `backlog.md`).
 
 ## Tests
 
-`tests/test_coordinator.py` runs against real `elkm1_lib.Elk` objects wherever practical,
+`tests/test_coordinator.py` runs against real `helpers.elk.Elk` objects wherever practical,
 because the bug classes found during development (wrong event name, wrong enum values,
-wrong command encoding) only show up against the real library.
+wrong command encoding) only show up against the real implementation.
 `test_sd_reply_notifies_coordinator_listeners` covers the listener path that lets dynamic
 entity creation work.
 

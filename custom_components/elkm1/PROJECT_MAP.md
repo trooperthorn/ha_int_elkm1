@@ -6,18 +6,19 @@ entity code.
 
 ## 1. Connection architecture
 
-`elkm1-lib` (pinned in `manifest.json`) owns the Elk-M1 ASCII protocol: message
-encode/decode (`message.py`), checksum/framing, and the `Elk` class's typed subsystem
-objects (`Area`, `Zone`, `Output`, `Task`, `Thermostat`, `Light`, `Counter`, `Setting`,
-`Keypad`, `Panel`) with their own command helpers (`Area.arm()`, `Zone.bypass()`,
-`Output.turn_on()`, etc.). This integration reuses all of that rather than
-reimplementing the protocol.
+`helpers/elk/` owns the Elk-M1 ASCII protocol directly: message encode/decode
+(`message.py`), checksum/framing, and the `Elk` class's typed subsystem objects (`Area`,
+`Zone`, `Output`, `Task`, `Thermostat`, `Light`, `Counter`, `Setting`, `Keypad`, `Panel`)
+with their own command helpers (`Area.arm()`, `Zone.bypass()`, `Output.turn_on()`, etc.).
+This used to be the third-party `elkm1-lib` PyPI package; it was removed 2026-09-05 and
+its protocol implementation ported into this repository (see `docs/decisions.md`), so
+every gap this project had found in that dependency could be fixed natively rather than
+worked around at the call site.
 
-The one thing replaced is each entry's bound
-`elkm1_lib.connection.Connection.connect()` method. `helpers/transport.py` installs the
-replacement on that connection instance only; it never changes the process-global
-class. The entry-owned manager supervises open, streams, bounded reconnect backoff,
-cancellation, and awaited close while adding host-side baud-rate auto-detection
+`helpers/transport.py`'s `ElkConnectionManager` drives `helpers/elk/connection.py`'s
+`Connection` directly - no monkey-patching of any kind, since this repository owns
+`Connection` itself. The entry-owned manager supervises open, streams, bounded reconnect
+backoff, cancellation, and awaited close while adding host-side baud-rate auto-detection
 (`helpers/baud_probe.py`: sweep the standard rates, confirm with a real `vn`
 version-request round-trip, cache the winning rate on the config entry). Network
 connections are unaffected - TCP has no baud rate to detect.
@@ -42,21 +43,29 @@ correctly.
 * `coordinator.py` - connection setup, push-callback registration per message type,
   the normalized `ElkPanelData` snapshot builder, and command methods (arm/disarm,
   bypass, display_message, speak_word/phrase, set_time) that entities/services call
-  into rather than talking to `elkm1_lib` objects directly.
+  into rather than talking to `helpers/elk/` objects directly.
 * `const.py` - domain constants, config keys, and `ELK_ELEMENTS` (the M1 Gold's
-  hardware-maximum element counts, since `elkm1_lib` always allocates that many
-  `Zone`/`Output`/etc. objects regardless of what's actually configured on the panel -
-  every platform's `async_setup_entry` filters on `.configured` before creating
-  entities).
+  hardware-maximum element counts, since `helpers/elk/elements.py`'s `Elements` always
+  allocates that many `Zone`/`Output`/etc. objects regardless of what's actually
+  configured on the panel - every platform's `async_setup_entry` filters on
+  `.configured` before creating entities).
 * `models.py` - `ElkPanelData` (the coordinator's typed snapshot; `zones`/`outputs`/
-  `tasks`/`thermostats`/`panel` are references to `elkm1_lib`'s own live objects, not a
-  second parallel copy) and `ElkRuntimeData` (`entry.runtime_data`).
+  `tasks`/`thermostats`/`panel` are references to `helpers/elk/`'s own live objects, not
+  a second parallel copy) and `ElkRuntimeData` (`entry.runtime_data`).
 * `entity.py` - `ElkEntity` base class (`CoordinatorEntity` + `_attr_has_entity_name`),
   the shared device-info factory, and `async_add_dynamic_entities()` (see the
   name-sync timing note in section 3 - every platform that filters on `.configured`
   uses this instead of a single one-shot `async_add_entities` pass).
 
 ### Helpers (`helpers/`)
+* `elk/` - the ELK-M1 protocol implementation this repository owns directly: message
+  encode/decode (`message.py`), the `Notifier` pub/sub dispatch (`notify.py`), the
+  `Element`/`Elements` base classes (`elements.py`), one module per element type
+  (`areas.py`, `zones.py`, `outputs.py`, `lights.py`, `keypads.py`, `tasks.py`,
+  `thermostats.py`, `counters.py`, `settings.py`, `users.py`, `panel.py`), the
+  connection/write-queue state (`connection.py`), UDP discovery (`discovery.py`), and
+  the `Elk` hub class tying them together (`hub.py`). See `docs/decisions.md`
+  2026-09-05 for why this replaced the `elkm1-lib` PyPI dependency.
 * `transport.py` - the entry-owned connection manager, plus `validate_serial_port()`/
   `validate_network_connection()` used by the config flow to verify a connection before
   creating an entry.
@@ -98,8 +107,9 @@ name) before creating entities, and registers any entity services that platform 
 ## 3. Protocol & library notes worth knowing
 
 **`.configured` depends on a slow, sequential per-index name sync - never gate entity
-creation on it with a single one-shot pass.** `elkm1_lib`'s `Elements._sd_handler` only
-sets an element's `._configured = True` once the panel's reply to an `SD` (text
+creation on it with a single one-shot pass.** `helpers/elk/elements.py`'s
+`Elements._sd_handler` only sets an element's `._configured = True` once the panel's
+reply to an `SD` (text
 description) request for that specific index has arrived, and the request loop asks for
 index N+1 only after receiving the reply for index N - a fully sequential exchange
 (208 round-trips for zones alone) that routinely outlasts `coordinator._async_setup()`,
@@ -114,7 +124,7 @@ pass, then keeps listening (`coordinator.async_add_listener`, woken by the coord
 `"SD"` handler on every description reply) and adds entities for elements as they
 individually become configured.
 
-**Enum/string/int casting.** `elkm1_lib` fields like `logical_status`/`definition`/
+**Enum/string/int casting.** `helpers/elk/` fields like `logical_status`/`definition`/
 `armed_status` and `arm_up_state` are typed numeric enums. `alarm_state` must retain its
 exact single-character wire value because valid values include `:` through `B`; code must
 not coerce it to an integer. Numeric enum readers compare against protocol values -
@@ -148,7 +158,7 @@ panel-adjacent temperature source; zone temperature comes from zones defined as
 `TEMPERATURE` type.
 
 **PIN codes arrive as strings from Home Assistant's UI/service calls** but
-`elkm1_lib`'s command helpers want an `int`. Every entity command method converts (and
+`helpers/elk/`'s command helpers want an `int`. Every entity command method converts (and
 warns, rather than crashing, on a non-numeric PIN) before calling into the coordinator.
 
 **Command methods write, they don't return command success/failure over the wire** -
