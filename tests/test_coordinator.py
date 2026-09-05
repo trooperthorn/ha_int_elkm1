@@ -719,13 +719,14 @@ async def test_async_setup_stops_the_manager_on_unexpected_cancellation(hass):
 # --------------------------------------------------------------------------
 
 
-def test_handle_keypad_change_fires_on_a_real_keypress(hass):
+async def test_handle_keypad_change_fires_on_a_real_keypress(hass):
     coordinator = _make_coordinator(hass)
     events = []
     hass.bus.async_listen("elkm1.keypad_key_pressed", lambda event: events.append(event.data))
     keypad = SimpleNamespace(index=0, name="Front Door")
 
     coordinator._handle_keypad_change(keypad, {"last_keypress": ("STAR", 11)})
+    await hass.async_block_till_done()
 
     assert events == [
         {"keypad_id": 1, "keypad_name": "Front Door", "key": 11, "key_name": "STAR"}
@@ -744,13 +745,14 @@ def test_handle_keypad_change_ignores_unrelated_changesets(hass):
     assert events == []
 
 
-def test_handle_user_code_clears_attribution_for_an_invalid_code(hass):
+async def test_handle_user_code_clears_attribution_for_an_invalid_code(hass):
     coordinator = _make_coordinator(hass)
     coordinator._elk = MagicMock()
     events = []
     hass.bus.async_listen("elkm1.user_code_entered", lambda event: events.append(event.data))
 
     coordinator._handle_user_code("1234", -1, 0)
+    await hass.async_block_till_done()
 
     assert coordinator._last_user is None
     assert events == [{"keypad_id": 1, "user_number": None, "valid": False}]
@@ -818,12 +820,13 @@ async def test_handle_timer_event_fires_with_the_correct_type(hass):
     ]
 
 
-def test_handle_alarm_memory_lists_only_flagged_areas(hass):
+async def test_handle_alarm_memory_lists_only_flagged_areas(hass):
     coordinator = _make_coordinator(hass)
     events = []
     hass.bus.async_listen("elkm1_alarm_memory", lambda event: events.append(event.data))
 
     coordinator._handle_alarm_memory([True, False, False, True])
+    await hass.async_block_till_done()
 
     assert events == [{"areas": [1, 4]}]
 
@@ -1263,7 +1266,7 @@ def test_handle_voice_message_ignores_the_real_two_positional_arg_call(hass):
     assert events == []
 
 
-def test_handle_voice_message_translates_a_direct_word_list(hass):
+async def test_handle_voice_message_translates_a_direct_word_list(hass):
     """If ever called with a single list/tuple argument (not the real
     two-positional-arg calling convention above), it does translate and fire."""
     coordinator = _make_coordinator(hass)
@@ -1271,6 +1274,7 @@ def test_handle_voice_message_translates_a_direct_word_list(hass):
     hass.bus.async_listen("elkm1_voice_announcement", lambda event: events.append(event.data))
 
     coordinator._handle_voice_message([471])
+    await hass.async_block_till_done()
 
     assert events == [{"source": "elk_m1", "raw_ids": [471], "message": "zone"}]
 
@@ -1285,21 +1289,23 @@ def test_handle_voice_message_swallows_a_translation_error(hass):
     assert events == []
 
 
-def test_handle_voice_message_translates_a_words_kwarg(hass):
+async def test_handle_voice_message_translates_a_words_kwarg(hass):
     coordinator = _make_coordinator(hass)
     events = []
     hass.bus.async_listen("elkm1_voice_announcement", lambda event: events.append(event.data))
 
     coordinator._handle_voice_message(words=[471])
+    await hass.async_block_till_done()
 
     assert events == [{"source": "elk_m1", "raw_ids": [471], "message": "zone"}]
 
 
-def test_handle_voice_message_translates_a_changeset_kwarg(hass):
+async def test_handle_voice_message_translates_a_changeset_kwarg(hass):
     coordinator = _make_coordinator(hass)
     events = []
     hass.bus.async_listen("elkm1_voice_announcement", lambda event: events.append(event.data))
 
     coordinator._handle_voice_message(changeset=[471])
+    await hass.async_block_till_done()
 
     assert events == [{"source": "elk_m1", "raw_ids": [471], "message": "zone"}]
