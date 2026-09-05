@@ -46,12 +46,8 @@ async def async_setup_entry(
         config_entry,
         coordinator,
         async_add_entities,
-        outputs[:64],
+        outputs,
         lambda output: ElkOutput(coordinator, config_entry, output.index),
-    )
-    # Outputs 65-208 have no panel text descriptions; created disabled by default.
-    async_add_entities(
-        [ElkOutput(coordinator, config_entry, output.index) for output in outputs[64:]]
     )
 
     thermostats = coordinator.data.thermostats if coordinator.data else []
@@ -61,15 +57,6 @@ async def async_setup_entry(
         async_add_entities,
         thermostats,
         lambda tstat: ElkThermostatEMHeat(coordinator, config_entry, tstat.index),
-    )
-
-    zones = coordinator.data.zones if coordinator.data else []
-    async_add_dynamic_entities(
-        config_entry,
-        coordinator,
-        async_add_entities,
-        zones,
-        lambda zone: ElkZoneBypassSwitch(coordinator, config_entry, zone.index),
     )
 
 
@@ -245,68 +232,3 @@ class ElkThermostatEMHeat(ElkEntity, SwitchEntity):
         raise HomeAssistantError(
             translation_domain=DOMAIN, translation_key="output_switch_only"
         )
-
-
-class ElkZoneBypassSwitch(ElkEntity, SwitchEntity):
-    """Representation of an Elk-M1 zone's bypass state as a switch.
-
-    `zb` is a toggle, so turn_on/turn_off only send it when the state differs.
-
-    Not translation_key-named: `Entity.translation_placeholders` is a `@final`
-    `cached_property` (computed once, then frozen for the entity's lifetime),
-    but the panel-reported zone name this entity's display name embeds can
-    arrive after entity creation. A live `name` override is the only way to
-    keep that name current. See docs/decisions.md.
-    """
-
-    _attr_entity_category = None
-    _attr_icon = "mdi:shield-off"
-
-    def __init__(
-        self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int
-    ) -> None:
-        """Initialize the zone bypass switch."""
-        super().__init__(coordinator, config_entry, f"zone_{index + 1}_bypass")
-        self._index = index
-        self._attr_unique_id = f"{config_entry.entry_id}_zone_{index + 1}_bypass"
-
-    def _get_obj(self) -> Any:
-        if self.coordinator.data and self._index < len(self.coordinator.data.zones):
-            return self.coordinator.data.zones[self._index]
-        return None
-
-    @property
-    @override
-    def name(self) -> str | None:
-        """Return the panel-configured name (may arrive after entity creation), suffixed."""
-        obj = self._get_obj()
-        base_name = obj.name if obj else f"Zone {self._index + 1}"
-        return f"{base_name} Bypass"
-
-    @staticmethod
-    def _enum_value(obj: Any, default: int = 0) -> int:
-        if hasattr(obj, "value"):
-            return int(obj.value)
-        return int(obj) if isinstance(obj, (int, float)) else default
-
-    @property
-    @override
-    def is_on(self) -> bool:
-        """Return True if the zone is currently bypassed."""
-        obj = self._get_obj()
-        if not obj:
-            return False
-        # ZoneLogicalStatus.BYPASSED == 3.
-        return self._enum_value(getattr(obj, "logical_status", 0)) == 3
-
-    @override
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Bypass the zone (no-op if already bypassed)."""
-        if not self.is_on:
-            await self.coordinator.bypass_zone(self._index + 1)
-
-    @override
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Clear the zone's bypass (no-op if not currently bypassed)."""
-        if self.is_on:
-            await self.coordinator.bypass_zone(self._index + 1)

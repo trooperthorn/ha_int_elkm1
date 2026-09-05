@@ -1136,11 +1136,16 @@ sensor_counter_set:
 
 sensor_zone_bypass:
   name: Sensor zone bypass
-  description: Bypasses zone.
+  description: Bypasses zone. Target the zone's own sensor entity (temperature/analog
+    zones) or binary_sensor entity (every other zone type) - not a switch, since
+    bypassing a zone always requires this code, with no way to silently toggle it
+    from a dashboard.
   target:
     entity:
       integration: elkm1
-      domain: sensor
+      domain:
+        - sensor
+        - binary_sensor
   fields:
     code:
       name: Code

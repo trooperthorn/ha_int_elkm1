@@ -72,9 +72,9 @@ without deleting and re-adding the integration.
 Platform | What
 ---|---
 `alarm_control_panel` | One entity per configured area (1-8), with arm-away/home/night/vacation/custom-bypass and disarm. Panic trigger is intentionally unavailable because ELK protocol v1.90 defines no third-party panic command.
-`binary_sensor` | One entity per configured zone (door/window/motion/smoke/CO/freeze/gas/heat/water, mapped from the panel's zone-definition field), one per system trouble condition (disabled by default), and one aggregate "any door/window open" sensor per area.
+`binary_sensor` | One entity per configured zone (door/window/motion/smoke/CO/freeze/gas/heat/water, mapped from the panel's zone-definition field), one read-only bypass-status entity per configured zone, one per system trouble condition (disabled by default), and one aggregate "any door/window open" sensor per area.
 `sensor` | Panel status/trouble summary, an active-zones count, and per-zone temperature/voltage sensors for zones defined as such.
-`switch` | Physical outputs 1-208 (65-208 disabled by default), thermostat emergency-heat, zone bypass (as a toggle), and a proxy switch for pre-arm automation blueprints.
+`switch` | Physical outputs 1-208 (65-208 disabled by default, and only created if the panel has actually named that output), thermostat emergency-heat, and a proxy switch for pre-arm automation blueprints. Zone bypass is intentionally not a switch - see Services below.
 `climate` | Elk-connected thermostats, if the panel has any.
 `light` | PLC/X10 lighting outputs.
 `number` | RAM counters and EEPROM custom values that have a panel-assigned name.
@@ -119,8 +119,13 @@ Entity-level, targeting specific entities:
   `elkm1.alarm_bypass` / `elkm1.alarm_clear_bypass` (toggle bypass for all zones in an
   area) and `elkm1.alarm_arm_home_instant` / `elkm1.alarm_arm_night_instant`
   (Elk's no-entry-delay arm variants).
-* `elkm1.sensor_zone_bypass` / `elkm1.sensor_zone_trigger` on zone `binary_sensor`
-  entities.
+* `elkm1.sensor_zone_bypass` (requires a `code`) on a zone's own `binary_sensor` entity
+  (most zones) or `sensor` entity (temperature/analog zones) - the only way to bypass or
+  clear the bypass on an individual zone. There is deliberately no bypass switch: a
+  switch has no way to require a code, so anyone with dashboard/automation access could
+  otherwise silently bypass a zone using the panel's stored PIN with no confirmation at
+  all. See `docs/decisions.md`.
+* `elkm1.sensor_zone_trigger` on a zone's `sensor` entity (temperature/analog zones).
 * `elkm1.sensor_counter_refresh` / `elkm1.sensor_counter_set` on counter `number`
   entities.
 * `elkm1.switch_output_turn_on_for` on output `switch` entities, to turn one on for a

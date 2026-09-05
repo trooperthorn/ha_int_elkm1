@@ -70,6 +70,13 @@ async def async_setup_entry(
 
     zones = coordinator.data.zones if coordinator.data else []
     async_add_dynamic_entities(config_entry, coordinator, async_add_entities, zones, _zone_entity)
+    async_add_dynamic_entities(
+        config_entry,
+        coordinator,
+        async_add_entities,
+        zones,
+        lambda zone: ElkZoneBypassBinarySensor(coordinator, config_entry, zone.index),
+    )
 
     entities: list[BinarySensorEntity] = []
     entities.extend(
@@ -164,6 +171,70 @@ class ElkBinarySensor(ElkEntity, BinarySensorEntity):
             "triggered_alarm": getattr(zone, "triggered_alarm", False),
             "voltage": getattr(zone, "voltage", 0.0),
         }
+
+    async def async_zone_bypass(self, code: str | None = None) -> None:
+        """Bypass zone via the coordinator, using the caller-supplied code.
+
+        The only way to bypass a zone: see ElkZoneBypassBinarySensor's
+        docstring for why this can't be a switch anyone can flip with no
+        code prompt.
+        """
+        await self.coordinator.bypass_zone(self._zone_index + 1, code)
+
+
+class ElkZoneBypassBinarySensor(ElkEntity, BinarySensorEntity):
+    """Read-only bypass status for a zone.
+
+    Not a switch: a plain dashboard toggle (switch.turn_on/turn_off) has no
+    way to require a code, so any user, automation, or compromised HA
+    instance could silently bypass a zone using the panel's stored PIN with
+    no confirmation at all - a materially weaker boundary than the alarm
+    panel card, which can at least prompt a human for a code before arm/
+    disarm. See docs/decisions.md 2026-09-05. Bypassing or clearing a
+    zone's bypass now requires the code-required elkm1.sensor_zone_bypass
+    service, targeting this zone's own binary_sensor (ElkBinarySensor) or
+    sensor (ElkZone, for temperature/analog zones) entity.
+    """
+
+    _attr_entity_category = None
+    _attr_icon = "mdi:shield-off"
+
+    def __init__(
+        self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int
+    ) -> None:
+        """Initialize the zone bypass status sensor."""
+        super().__init__(coordinator, config_entry, f"zone_{index + 1}_bypass")
+        self._index = index
+        self._attr_unique_id = f"{config_entry.entry_id}_zone_{index + 1}_bypass"
+
+    def _get_obj(self) -> Any:
+        if self.coordinator.data and self._index < len(self.coordinator.data.zones):
+            return self.coordinator.data.zones[self._index]
+        return None
+
+    @property
+    @override
+    def name(self) -> str | None:
+        """Return the panel-configured name (may arrive after entity creation), suffixed."""
+        obj = self._get_obj()
+        base_name = obj.name if obj else f"Zone {self._index + 1}"
+        return f"{base_name} Bypass"
+
+    @staticmethod
+    def _enum_value(obj: Any, default: int = 0) -> int:
+        if hasattr(obj, "value"):
+            return int(obj.value)
+        return int(obj) if isinstance(obj, (int, float)) else default
+
+    @property
+    @override
+    def is_on(self) -> bool:
+        """Return True if the zone is currently bypassed."""
+        obj = self._get_obj()
+        if not obj:
+            return False
+        # ZoneLogicalStatus.BYPASSED == 3.
+        return self._enum_value(getattr(obj, "logical_status", 0)) == 3
 
 
 class ElkTroubleBinarySensor(ElkEntity, BinarySensorEntity):
