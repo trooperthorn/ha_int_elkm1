@@ -385,3 +385,35 @@ or tracebacks in any run**:
 entry), the config flow's own validation step (this script calls `async_setup_entry`
 directly, the same shortcut the fourth follow-up entry used), and a soak duration beyond a
 short observation window.
+
+## Live run, 2026-09-05 (seventh follow-up): write commands, via `scripts/live_full_verification.py`
+
+Sean ran the new guided, per-step-confirmed write-command script against the same panel.
+
+**Confirmed working correctly**: `display_message` (area 1's keypad, as already established
+in the third follow-up entry above); the entity-states snapshot (46 real states written, 1
+unavailable - `scene.elk_m1_task_01`, expected since no `TC` sync had reported that task
+configured yet); and, critically, the **arm-refusal safety guard**: area 1 was correctly
+refused (14 violated zones assigned to it, matching every earlier finding about this bench
+panel's unwired open loops) before any arm command was ever sent. Output, task, and light
+control were skipped entirely (left blank at the prompt) - by design, since nobody has
+verified what those numbers actually drive on this specific panel.
+
+**Real bug found**: `set_panel_time` and a separate zone-bypass attempt both failed with a
+confirmation timeout (`... was not confirmed by a valid RR/ZB response`), and the periodic
+status refresh spuriously timed out waiting for all of `AS`/`AZ`/`CS`/`SS`/`LW` at once. Root
+cause: a single corrupted `RR` reply (real serial-line noise, correctly rejected by the
+checksum check) cascaded into a multi-second stall of every command queued behind it,
+because `helpers/elk/connection.py`'s write-queue drain loop blocks the whole queue - not
+just the command that lost its reply - for up to `MESSAGE_RESPONSE_TIME` per lost reply.
+Full analysis and the fix (`MESSAGE_RESPONSE_TIME` 5.0s -> 1.5s) are in `docs/decisions.md`
+2026-09-05. The system failed safely throughout: no crash, no bad data accepted, no
+persistent broken state, and the unload at the end was clean - this was a reliability/
+latency bug under real serial-line noise, not a data-integrity or safety bug.
+
+**Not yet re-verified live**: the fix itself. The panel was not available for a repeat write-
+command pass in the same session; `tests/test_elk_connection.py` gained unit coverage for
+the new ceiling and the "one lost reply doesn't block the next queued item forever"
+behavior, but nothing has re-created the original corrupted-reply condition against real
+hardware since the fix landed. Re-run `scripts/live_full_verification.py`'s `set_panel_time`
+and `zone_bypass` steps next time the panel is accessible to close this out.

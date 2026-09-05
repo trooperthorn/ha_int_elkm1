@@ -20,6 +20,11 @@ Open items moved out of code, dated when they were recorded.
   premise does not exist in the protocol either way. Not documented in the README or
   services, and has no test coverage. Needs a decision: remove the dead handler/event, or
   determine whether some other real trigger was intended and wire it up properly.
+- 2026-09-05, `helpers/elk/connection.py`'s `MESSAGE_RESPONSE_TIME` lowered 5.0s -> 1.5s
+  after a live-hardware incident (`docs/decisions.md`, `docs/live_qualification.md`'s
+  seventh entry) - not yet re-verified against real hardware. Re-run
+  `scripts/live_full_verification.py`'s `set_panel_time` and zone-bypass steps next time
+  the panel is accessible.
 Resolved:
 
 - 2026-09-05, `vocabulary.py`'s `ELK_VOICE_VOCABULARY` rebuilt from Elk's own `WordLists`

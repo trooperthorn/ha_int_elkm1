@@ -22,7 +22,10 @@ from .message import MessageEncode, checksum as _checksum
 from .notify import Notifier
 
 _LOGGER = logging.getLogger(__name__)
-MESSAGE_RESPONSE_TIME = 5.0
+# A lost reply stalls every later queued write for up to this long, not just
+# the command that lost it - kept short relative to real round trips for
+# exactly that reason. See docs/decisions.md 2026-09-05.
+MESSAGE_RESPONSE_TIME = 1.5
 
 
 class QueuedWrite(NamedTuple):
