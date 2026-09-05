@@ -12,9 +12,9 @@ Products, Inc.*
 
 ## Architecture
 
-The integration uses [`elkm1-lib`](https://github.com/gwww/elkm1) for the Elk-M1 ASCII
-protocol - message encoding/decoding and the panel's typed subsystem objects (areas,
-zones, outputs, tasks, thermostats, lights, counters, keypads). Each config entry owns a
+The integration owns the Elk-M1 ASCII protocol directly (`custom_components/elkm1/helpers/elk/`)
+- message encoding/decoding and the panel's typed subsystem objects (areas, zones,
+outputs, tasks, thermostats, lights, counters, keypads). Each config entry owns a
 single native `asyncio` connection/reconnect task, so serial connections can be
 opened with automatic baud-rate detection (the protocol has no way to query or negotiate
 baud rate on the wire; a Global Programming setting fixes it at 9600-115200, so on

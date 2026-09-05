@@ -53,7 +53,7 @@ def mock_serial_entry() -> MockConfigEntry:
 
 @pytest.fixture
 def mock_elk() -> MagicMock:
-    """A bare MagicMock standing in for an elkm1_lib.Elk instance."""
+    """A bare MagicMock standing in for a helpers.elk.Elk instance."""
     elk = MagicMock()
     elk.areas = [MagicMock() for _ in range(1)]
     elk.zones = []

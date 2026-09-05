@@ -114,7 +114,149 @@
       }
     }
   },
+  "entity": {
+    "alarm_control_panel": {
+      "area": {
+        "name": "Area {area_num}"
+      }
+    },
+    "binary_sensor": {
+      "area_openings": {
+        "name": "Area {area_num} Openings"
+      },
+      "trouble_ac_fail": {
+        "name": "AC Fail"
+      },
+      "trouble_box_tamper": {
+        "name": "Box Tamper"
+      },
+      "trouble_fail_to_communicate": {
+        "name": "Fail To Communicate"
+      },
+      "trouble_eeprom_memory_error": {
+        "name": "EEPROM Memory Error"
+      },
+      "trouble_low_battery": {
+        "name": "Low Battery Control"
+      },
+      "trouble_transmitter_low_battery": {
+        "name": "Transmitter Low Battery"
+      },
+      "trouble_over_current": {
+        "name": "Over Current"
+      },
+      "trouble_telephone_fault": {
+        "name": "Telephone Fault"
+      },
+      "trouble_output_2": {
+        "name": "Output 2"
+      },
+      "trouble_missing_keypad": {
+        "name": "Missing Keypad"
+      },
+      "trouble_zone_expander": {
+        "name": "Zone Expander"
+      },
+      "trouble_output_expander": {
+        "name": "Output Expander"
+      },
+      "trouble_elkrp_remote_access": {
+        "name": "ELKRP Remote Access"
+      },
+      "trouble_common_area_not_armed": {
+        "name": "Common Area Not Armed"
+      },
+      "trouble_flash_memory_error": {
+        "name": "Flash Memory Error"
+      },
+      "trouble_security_alert": {
+        "name": "Security Alert"
+      },
+      "trouble_serial_port_expander": {
+        "name": "Serial Port Expander"
+      },
+      "trouble_lost_transmitter": {
+        "name": "Lost Transmitter"
+      },
+      "trouble_ge_smoke_cleanme": {
+        "name": "GE Smoke CleanMe"
+      },
+      "trouble_ethernet": {
+        "name": "Ethernet"
+      },
+      "trouble_display_message_line_1": {
+        "name": "Display Message In Keypad Line 1"
+      },
+      "trouble_display_message_line_2": {
+        "name": "Display Message In Keypad Line 2"
+      },
+      "trouble_fire": {
+        "name": "Fire"
+      }
+    },
+    "sensor": {
+      "panel": {
+        "name": "Panel Status"
+      },
+      "active_zones": {
+        "name": "Active Zones"
+      }
+    },
+    "switch": {
+      "arm_system_request": {
+        "name": "Arm System Request"
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Timed out or failed connecting to {connection_url}"
+    },
+    "invalid_auth": {
+      "message": "Elk-M1 rejected the configured username/password"
+    },
+    "panel_disconnected": {
+      "message": "ELK-M1 command rejected: panel is disconnected"
+    },
+    "elkrp_paused": {
+      "message": "ELK-M1 command rejected: ELKRP has paused automation traffic"
+    },
+    "queue_command_failed": {
+      "message": "Unable to queue ELK-M1 {description}: {error}"
+    },
+    "command_not_confirmed": {
+      "message": "ELK-M1 {description} was not confirmed by a valid {response_command} response"
+    },
+    "send_command_failed": {
+      "message": "Unable to send ELK-M1 {description}: {error}"
+    },
+    "panic_not_supported": {
+      "message": "ELK-M1 protocol v1.90 provides no third-party panic command"
+    },
+    "panel_unavailable": {
+      "message": "ELK-M1 panel is unavailable"
+    },
+    "counter_only": {
+      "message": "Supported only on ElkM1 counter entities"
+    },
+    "output_switch_only": {
+      "message": "Supported only on ElkM1 output switch entities"
+    },
+    "unknown_prefix": {
+      "message": "No ElkM1 coordinator with prefix {prefix} found"
+    },
+    "invalid_pin": {
+      "message": "ELK-M1 PIN must contain numeric digits only"
+    },
+    "area_command_failed": {
+      "message": "Error {action} area {area_num}: {error}"
+    }
+  },
   "issues": {
+    "outdated_panel_broadcasts": {
+      "title": "Elk-M1 Global Programming broadcasts unconfirmed",
+      "description": "Home Assistant has not yet seen a broadcast from these Global Programming settings, which push zone/output/task/light/keypad changes and the event log without polling: {settings}.\n\nThis may just mean nothing of that type has changed yet, or it may mean the setting needs to be enabled on the panel (via keypad or ElkRP, under Global Programming, locations 35-40). If it stays unconfirmed after triggering the relevant activity (e.g. opening a door), enable the setting on the panel and reload this integration."
+    },
     "deprecated_sensor": {
       "description": "The sensor {entity_name} (`{entity_id}`) is deprecated because it has been replaced with `{replacement_entity_id}`.\n\nUpdate your dashboards, templates, automations and scripts to use the replacement entity, then disable the deprecated sensor to have it removed after the next restart.",
       "title": "Deprecated sensor detected"
@@ -173,11 +315,11 @@
           "name": "Area"
         },
         "beep": {
-          "description": "Whether to beep when the message is displayed.",
+          "description": "Whether to beep when the message is displayed. Live-tested and not confirmed: the panel accepted this flag with no error either way, but no audible beep occurred on the tested keypad regardless of this setting.",
           "name": "Beep"
         },
         "clear": {
-          "description": "0=clear message, 1=clear message with * key, 2=Display until timeout.",
+          "description": "0=clear message, 1=clear message with * key, 2=Display until timeout, per the manual. Live-tested against a real panel: 0 and 2 both showed nothing on the keypad; only 1 actually displayed the message, folded into the keypad's existing rotating status line rather than a fixed line1/line2 position. Defaults to 1 for that reason.",
           "name": "Clear"
         },
         "line1": {

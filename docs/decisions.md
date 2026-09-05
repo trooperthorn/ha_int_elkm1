@@ -3,6 +3,204 @@
 Dated decisions with the alternative rejected and why. Entries marked "recorded" were
 carried out of code comments on 2026-09-03; the decision itself predates that date.
 
+## 2026-09-05, Gold quality-scale: `translation_key` naming stops at entities whose name embeds live panel data
+
+Working through the Gold-tier `entity-translations` rule, most fixed-English entity names
+(the panel sensor, active-zones summary, per-area alarm partitions, the arm-request proxy
+switch, per-area openings sensors, and all 23 named trouble binary sensors) converted
+cleanly to `_attr_translation_key` plus `strings.json`'s new `entity` section, including two
+that need a per-entity placeholder (`Area {area_num}`, `Area {area_num} Openings}`) filled
+in once at `__init__` time via `self._attr_translation_placeholders = {...}`.
+
+Two entities - `ElkZoneBypassSwitch` and `ElkThermostatEMHeat` - were rejected for this
+treatment after hitting a real constraint verified against HA core
+(`homeassistant/helpers/entity.py`): `Entity.translation_placeholders` is `@final` and a
+`@cached_property`, computed once and then frozen in the instance's `__dict__` for the
+entity's lifetime. Both of these entities embed a panel-reported name mid-string ("Front
+Door Bypass", "Upstairs Emergency Heat") that is documented elsewhere in this repo as
+arriving *after* entity creation (the panel sends zone/thermostat names asynchronously).
+Setting `_attr_translation_placeholders` once at `__init__` would freeze the name at
+whatever placeholder was available at construction time (almost always the "Zone N" /
+"Thermostat N" index fallback), permanently hiding the real panel name once it arrives -
+a real regression from the existing live `name` property override these two entities
+already had. Kept the live `name` override for these two instead of forcing a mechanism
+that cannot represent dynamically-arriving data; `_attr_icon` also had to stay literal on
+`ElkZoneBypassSwitch` for the same reason (icon-translations keys by `translation_key`,
+which this entity intentionally does not set).
+
+For `repair-issues`, `helpers/panel_settings.py`'s `verify_panel_configuration()` (Global
+Programming broadcast-category confirmation) now raises a Repair issue via
+`ir.async_create_issue` (deleted via `ir.async_delete_issue` once every required category is
+confirmed) instead of only logging a warning, since it is user-actionable (enable the
+setting on the panel) and was already the kind of thing a user could miss in the log.
+Scoped `issue_id` per config entry (`outdated_panel_broadcasts_<entry_id>`) to keep the
+already-supported multi-panel case from colliding on one shared issue.
+
+## 2026-09-05, `vocabulary.py` and a new `event_log.py` sourced from Elk's own ElkRP tool
+
+Sean provided a copy of ElkRP (Elk's own Windows programming application) for analysis.
+Decompiling its managed .NET assemblies (via `ilspycmd`) and reading the static reference
+database it ships with (`Controls2.mdb`) turned up two authoritative data sources this
+repository previously had to guess at or leave incomplete:
+
+- `WordLists` (PanelType='M1G', WordListVer='0.8', 478 rows) is Elk's own voice-vocabulary
+  table - the same data ElkRP itself uses to build `sw`/`sp` word lists. It confirmed IDs
+  21-473 in the existing `ELK_VOICE_VOCABULARY` table already matched word-for-word, but
+  found the "say toggle" phrase IDs were wrong: this repo had them as positive
+  495/496/505-512, sourced from a reading of the installation manual's ambiguous Appendix C;
+  the real IDs are negative (-503 through -512), and four more (-2/-3/-4/-5, the "insert
+  condition"/"insert time"/"inverted condition"/"say number" template tokens) were missing
+  entirely. Fixed by replacing the wrong entries and adding the missing ones, sourced
+  directly from ElkRP's own table rather than the manual. This also resolved a real
+  ambiguity this repo's earlier docstring speculated about: IDs 2/3/4 ("custom 2/3/4") and
+  -2/-3/-4 (the template tokens) are genuinely different, non-overlapping IDs in the real
+  table, not one ID space the manual failed to disambiguate.
+- `EventLists` (PanelType='M1G', ListVer='5.3.0', the newest available, 1358 rows) maps
+  every numeric event code the `LD` (system log) message's `event` field can carry (e.g.
+  `1001 = FIRE ALARM`, `4176 = ZONE 176 STATE`, `7208 = OUTPUT 208 STATE`) to the
+  description ElkRP itself shows. `ld_decode` previously left this field a bare,
+  undescribed integer, and nothing in `coordinator.py` consumed the `LD` broadcast's
+  content at all (only counted it for diagnostics). Added `event_log.py` with the full
+  table plus `describe_elk_event()`, and a new `_handle_log_event` coordinator handler
+  (mirroring the existing pattern used by `_handle_timer_event`/`_handle_alarm_memory`)
+  that fires a new `elkm1.log_event` HA bus event with the area, raw event code,
+  human-readable description, log number/index, and timestamp - the same shape those
+  existing handlers already use. New `EVENT_ELKM1_LOG_EVENT` constant in `const.py`.
+
+Both tables were extracted read-only via a local Access connection (using ElkRP's own
+hardcoded, shared - not per-install secret - database-open credential, embedded in every
+shipped copy of the app) and are not runtime dependencies; they're compiled once into
+Python source the same way `ELK_VOICE_VOCABULARY` already was. See the full survey (every
+managed assembly decompiled, every form's purpose cataloged, compared against this
+repository's coverage) delivered to Sean separately as `ElkRP_Feature_Catalog.md` - most of
+ElkRP's functionality (full EEPROM panel programming, the panel's own WhenThen rules
+engine, M1XEP/central-station/M1Cloud provisioning) rides on a separate, undocumented
+binary protocol this repository correctly does not attempt to speak; these two data tables
+were the only pieces that meaningfully improved data this repo already surfaces over the
+documented ASCII protocol.
+
+## 2026-09-05, removed the `elkm1-lib` PyPI dependency; own the protocol directly
+
+`manifest.json` no longer requires `elkm1-lib` (was pinned 2.2.15); the ELK-M1 RS-232
+ASCII protocol implementation it used to provide (message encode/decode, the `Elk` hub
+and its typed element collections, the connection/write-queue state, UDP discovery) now
+lives in this repository's own `helpers/elk/` sub-package. The only remaining runtime
+dependency is `serialx==1.9.0`.
+
+Sean's call, made after this session had already found and worked around several real
+gaps in the pinned version: no encoder for `kc` (Request Keypad Status), `rr` (RTC read),
+`st` (direct temperature request), or indexed `ld` (log request); `cw`/`rw`/`tr`/`ts`
+encoders that declared no reply code even though the spec documents one for each,
+patched at the transport layer with a `RESPONSE_COMMAND_OVERRIDES` table; no native
+handling of the `PC` "all lights" aggregate form or the full v1.90 `KC` field set, both
+already reimplemented as post-hoc patches in `helpers/transport.py`; the `AS` reply's
+M1-4.11+ exit/entrance-timer sub-field silently dropped; and `helpers/transport.py`
+already reaching into five-plus private (`_`-prefixed) attributes of `Connection` and
+monkey-patching three of its bound methods via `MethodType` - in practice, the library
+was already only half in control of its own connection lifecycle. Rejected: continuing
+to patch around a dependency this integration had already outgrown. Every gap above was
+fixed natively during the port rather than carried forward as another workaround:
+`kc`/`rr`/`st`/indexed-`ld` encoders now exist and are verified against both the
+primary-source PDF and real hardware; `cw_encode`/`rw_encode`/`tr_encode`/`ts_encode`
+declare their real reply codes directly, retiring `RESPONSE_COMMAND_OVERRIDES`;
+`decode()` handles the `PC` aggregate form and the full `KC` field set natively (the
+latter still split into a separate `kc_detail_decode()` to avoid a `Notifier.notify()`
+keyword-argument mismatch crash - see the file's own docstring); `as_decode` now parses
+the M1-4.11+ trailing field into `timer_seconds`; and `Connection` is `helpers/transport.py`'s
+own class with public state, so there is no more monkey-patching or reaching into another
+package's private attributes.
+
+Verification: every encode/decode function ported was checked against the manufacturer's
+own `ELK-M1_RS232_PROTOCOL.Ver+1.90.pdf` worked examples and, for `vn`/`as`/`ss`/`kc`/
+`rr`/`st`/`ld`/`ic`/`xk`/`ua`/`zs`, against real captured hardware data from this same
+session (see `docs/live_qualification.md`). The port itself surfaced two further bugs
+that a byte-for-byte comparison against the old dependency's actual behavior would not
+have caught, because they were never exercised until the full test gate ran against the
+new code: `_pc_all_decode` had its house/unit/aggregate-code field offsets wrong (fixed
+by re-deriving them from the same wire example used by
+`tests/test_transport.py::test_read_stream_decodes_all_lights_and_complete_keypad_status`),
+and `kc_detail_decode` did not catch its own `ValueError` on a malformed supplemental
+keypad field, which would have taken down the entire read loop on one corrupt frame
+instead of just discarding that frame's supplemental detail (fixed by wrapping it in its
+own `try`/`except`). Full `ruff`/`mypy`/`pytest` gate green (211 tests) after the fix.
+
+## 2026-09-05, `Users.username()`'s reserved-code special names were unreachable dead code
+
+Found while adding `tests/test_elk_users.py` during the elkm1-lib removal's test-coverage
+follow-up (see the earlier 2026-09-05 removal entry). `username()` checked
+`0 <= user_number < self.max_elements` (203) *before* its special-case branches for the
+reserved raw codes 201 ("Program Code"), 202 ("ELK RP Code"), and 203 ("Quick Arm", no code
+- spec section 4.16, M1 Ver. 4.4.2+): since the `Users` collection is sized to
+`Max.USERS.value` (203) elements, that range check alone already covers every 0-based index
+from 0 to 202, so the special-case comparisons (written against the raw 1-based values
+201/202/203) could only ever be reached by an out-of-range input that does not correspond
+to any code the panel actually sends - `coordinator.py`'s only caller passes
+`ic_decode`'s already-0-based `user` field (`int(msg[16:19]) - 1`), so a real Program/ElkRP/
+Quick-arm event would report `changed_by` as a generic `User-201`/`User-202`/`User-203`
+placeholder instead of the intended label. Fixed by checking the special cases first,
+using their 0-based equivalents (200/201/202) to match how every other index in this
+codebase is already 0-based. Regression tests:
+`tests/test_elk_users.py::test_username_returns_special_names_for_the_reserved_range` and
+`test_username_does_not_return_a_placeholder_name_for_the_reserved_indices`.
+
+## 2026-09-05, `number.py` guards `.value is None` for counters and custom values
+
+Found by actually running this integration's real `async_setup_entry` against real
+hardware (see `docs/live_qualification.md`'s fourth follow-up entry) rather than a
+standalone protocol script: `elkm1_lib.counters.Counter.value` and
+`elkm1_lib.settings.Setting.value` both default to `None` until a `CV`/`CR` message
+populates them, but `native_value` called `float(obj.value)` unconditionally whenever the
+object existed, crashing on every fresh setup with a `TypeError`. Fixed both properties to
+check for `None` explicitly. Checked every other `int(obj.value)`/`float(obj.` call in
+every platform file for the same mistake before stopping - the rest either wrap a
+default-`0` attribute or are an unrelated, already-guarded enum-unwrapping helper, not
+the same bug.
+
+## 2026-09-05, `vocabulary.py` replaced from a document now known to be stale; unresolved
+
+`ELK_VOICE_VOCABULARY` was rewritten from `ELK_M1_Installation&Programming_Manual.pdf`
+Appendix C ("Voice Message Vocabulary *RP only*") after finding the previous table did not
+match that document at all (different words at nearly every ID, e.g. ID 108 was
+`"alarm"` there vs. `"center"` in Appendix C). That manual's own title page states it is
+"Current with Firmware 5.3.10"; Sean's live panel is 5.3.18. Sean had previously tested
+real word playback against the *old* table and reports numbers and room names sounded
+correct - which conflicts with Appendix C's numbering (old table: `1`-`9` = one-nine
+directly; Appendix C: `22`-`30` = one-nine, offset by 21). The two cannot both be right for
+the same panel.
+
+Rejected for now: reverting to the old table (it was independently confirmed fabricated,
+not sourced from any document found this session, so "sounded right" for simple low-number
+IDs doesn't establish it's correct for the other ~460 entries) and re-deriving a third
+table without live evidence (guessing again would repeat the same mistake this entry is
+about). Decision: leave `vocabulary.py` as the Appendix-C-derived table for now: Sean will
+re-test actual word/phrase playback against the real panel after the current release and
+report back exactly which IDs produced which spoken words, so the table can be corrected
+from first-hand evidence rather than a manual already 8 patch versions stale. Recorded in
+`docs/backlog.md` as an open item - do not treat this table as verified until that
+retest happens.
+
+See also the `_handle_voice_message` finding in `docs/backlog.md`: even a fully correct
+vocabulary table would not make the inbound voice-translation feature reachable, because
+that is a separate, deeper problem (the callback can never receive word data at all).
+
+## 2026-09-05, thermostat (`ts`/`tr`) live qualification is will-not-test
+
+Sean's bench setup has no Elk-connected thermostat and will not get one. Rejected: leaving
+this open as a pending/unverified live-qualification item indefinitely, which would read as
+an oversight rather than a scope decision. `climate.py`'s `ElkThermostat` entity stays
+covered by simulated tests only; see `docs/live_qualification.md`'s 2026-09-05 follow-up
+entry.
+
+## 2026-09-05, `hacs.json`'s `hacs` minimum-version key is kept
+
+Verified against `~/repos/hacs-documentation/source/docs/publish/start.md`, which lists
+`hacs` (string, optional) as "The minimum required HACS version" - still a documented,
+valid key as of HACS 2.0.5. The scanner's `hacs-min-version-key` finding is a review
+prompt ("confirm it is still documented"), not a removal instruction; this closes that
+review. The pinned floor (`1.32.0`) stays: nothing this integration ships (no local
+`brand/icon.png`, no HACS-2.x-only feature) requires a newer minimum, and lowering the
+floor's precision would only add a maintenance burden with no functional benefit.
+
 ## 2026-09-04, `IC` wired for `changed_by`; Alarmo sync is one-way
 
 `coordinator.py` now attaches an `IC` handler and resolves the reporting user's name via
@@ -58,10 +256,11 @@ overstate what the panel says. Rejected: mapping definition 3 to `window`.
 Rejected: an `EMERGENCY_HEAT` hvac mode, which would put two competing controls on one
 setting.
 
-## Recorded, baud detection reuses the library's encoder and decoder
+## Recorded, baud detection reuses the shared encoder and decoder
 
 Rejected: a hand-written `vn` frame, which would re-derive checksum and framing that
-`elkm1_lib.message` already implements correctly.
+`helpers/elk/message.py` already implements correctly (originally `elkm1_lib.message`;
+see the 2026-09-05 entry above on removing that dependency).
 
 ## Recorded, a winning baud probe hands back its open connection
 

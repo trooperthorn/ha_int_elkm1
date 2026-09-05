@@ -63,6 +63,7 @@ ELK_ELEMENTS = {
 
 EVENT_ELKM1_KEYPAD_KEY_PRESSED = "elkm1.keypad_key_pressed"
 EVENT_ELKM1_USER_CODE_ENTERED = "elkm1.user_code_entered"
+EVENT_ELKM1_LOG_EVENT = "elkm1.log_event"
 
 ATTR_DURATION = "duration"
 ATTR_KEYPAD_ID = "keypad_id"

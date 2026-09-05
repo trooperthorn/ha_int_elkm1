@@ -73,8 +73,8 @@ async def async_setup_entry(
 
     entities: list[BinarySensorEntity] = []
     entities.extend(
-        ElkTroubleBinarySensor(coordinator, config_entry, name, label)
-        for _index, (name, label) in TROUBLE_INDEX_NAMES.items()
+        ElkTroubleBinarySensor(coordinator, config_entry, name)
+        for _index, (name, _label) in TROUBLE_INDEX_NAMES.items()
     )
 
     # One aggregate opening sensor per area; see docs/cross_integration.md.
@@ -119,7 +119,7 @@ class ElkBinarySensor(ElkEntity, BinarySensorEntity):
         return None
 
     def _get_enum_value(self, obj: Any, default: int = 0) -> int:
-        """Safely extract the raw integer value from elkm1_lib Enum objects or raw dicts."""
+        """Safely extract the raw integer value from helpers.elk Enum objects or raw dicts."""
         if hasattr(obj, "value"):
             return int(obj.value)
         if isinstance(obj, str):
@@ -178,13 +178,12 @@ class ElkTroubleBinarySensor(ElkEntity, BinarySensorEntity):
         coordinator: ElkDataUpdateCoordinator,
         config_entry: ConfigEntry,
         trouble_name: str,
-        trouble_label: str,
     ) -> None:
         """Initialize the trouble sensor."""
         super().__init__(coordinator, config_entry, f"trouble_{trouble_name}")
         self._trouble_name = trouble_name
         self._attr_unique_id = f"{config_entry.entry_id}_trouble_{trouble_name}"
-        self._attr_name = trouble_label
+        self._attr_translation_key = f"trouble_{trouble_name}"
 
     @property
     def is_on(self) -> bool:
@@ -206,6 +205,7 @@ class ElkAreaOpeningsBinarySensor(ElkEntity, BinarySensorEntity):
     """Aggregate 'any door/window open' sensor for one area."""
 
     _attr_device_class = BinarySensorDeviceClass.OPENING
+    _attr_translation_key = "area_openings"
 
     def __init__(
         self,
@@ -218,7 +218,7 @@ class ElkAreaOpeningsBinarySensor(ElkEntity, BinarySensorEntity):
         super().__init__(coordinator, config_entry, f"area_{area_num}_openings")
         self._area_index = area_index
         self._attr_unique_id = f"{config_entry.entry_id}_area_{area_num}_openings"
-        self._attr_name = f"Area {area_num} Openings"
+        self._attr_translation_placeholders = {"area_num": str(area_num)}
 
     def _get_enum_value(self, obj: Any, default: int = 0) -> int:
         if hasattr(obj, "value"):

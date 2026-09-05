@@ -9,7 +9,6 @@ from typing import Any, Self, override
 from urllib.parse import urlparse
 
 import voluptuous as vol
-from elkm1_lib.discovery import ElkSystem
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -55,6 +54,7 @@ from .discovery import (
     async_discover_devices,
     async_update_entry_from_discovery,
 )
+from .helpers.elk.discovery import ElkSystem
 from .helpers.transport import (
     ConnectionTimeoutError,
     InvalidAuthError,

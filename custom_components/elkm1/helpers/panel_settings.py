@@ -10,7 +10,13 @@ import asyncio
 import logging
 from typing import Any
 
+from homeassistant.helpers import issue_registry as ir
+
+from ..const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
+
+OUTDATED_BROADCASTS_ISSUE_ID = "outdated_panel_broadcasts"
 
 # Global Programming location -> (setting name, broadcast message type it gates).
 REQUIRED_SETTINGS: dict[int, tuple[str, str]] = {
@@ -102,6 +108,7 @@ async def verify_panel_configuration(coordinator: Any) -> tuple[bool, dict[str, 
     details["settings"] = settings_status
 
     unconfirmed = [s["name"] for s in settings_status.values() if not s["enabled"]]
+    issue_id = f"{OUTDATED_BROADCASTS_ISSUE_ID}_{coordinator.config_entry.entry_id}"
     if unconfirmed:
         _LOGGER.warning(
             "Could not confirm these Global Programming settings are enabled "
@@ -111,6 +118,18 @@ async def verify_panel_configuration(coordinator: Any) -> tuple[bool, dict[str, 
             "'Global Programming'): %s",
             ", ".join(unconfirmed),
         )
+        ir.async_create_issue(
+            coordinator.hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            issue_domain=DOMAIN,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=OUTDATED_BROADCASTS_ISSUE_ID,
+            translation_placeholders={"settings": ", ".join(unconfirmed)},
+        )
+    else:
+        ir.async_delete_issue(coordinator.hass, DOMAIN, issue_id)
 
     is_configured = version is not None
     details["configured"] = is_configured

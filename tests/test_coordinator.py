@@ -1,22 +1,16 @@
 """Tests for ElkDataUpdateCoordinator: login/auth handling and command
-dispatch, verified against real elkm1_lib.Elk objects where practical.
+dispatch, verified against real helpers.elk.Elk objects where practical.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from elkm1_lib.const import (
-    AlarmState,
-    ArmedStatus,
-    ArmLevel,
-    ArmUpState,
-    ZoneLogicalStatus,
-    ZoneType,
-)
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -27,6 +21,14 @@ from custom_components.elkm1.const import (
     CONNECTION_NETWORK,
 )
 from custom_components.elkm1.coordinator import ElkDataUpdateCoordinator
+from custom_components.elkm1.helpers.elk.const import (
+    AlarmState,
+    ArmedStatus,
+    ArmLevel,
+    ArmUpState,
+    ZoneLogicalStatus,
+    ZoneType,
+)
 from custom_components.elkm1.helpers.transport import ElkConnectionManager
 
 
@@ -47,7 +49,7 @@ async def _confirm_immediately(sender, *_args, **_kwargs):
 
 
 def _normalized_elk(area, zones=()):
-    """Build the minimal elkm1-lib-shaped object used by normalization tests."""
+    """Build the minimal helpers.elk-shaped object used by normalization tests."""
     return SimpleNamespace(
         areas=[area],
         zones=list(zones),
@@ -152,6 +154,47 @@ async def test_sd_reply_notifies_coordinator_listeners(hass, _patch_login):
     await coordinator.async_disconnect()
 
 
+@pytest.mark.parametrize("_patch_login", [True], indirect=True)
+async def test_ld_reply_fires_a_log_event_with_a_human_readable_description(hass, _patch_login):
+    """An "LD" (system log) reply must fire EVENT_ELKM1_LOG_EVENT with the
+    event code's description from event_log.py, not just the bare code."""
+    coordinator = _make_coordinator(hass)
+    await coordinator._async_setup()
+    assert coordinator._elk is not None
+
+    events = []
+    hass.bus.async_listen(
+        "elkm1.log_event", lambda event: events.append(event.data)
+    )
+
+    coordinator._elk._notifier.notify(
+        "LD",
+        {
+            "area": 0,
+            "log": {
+                "event": 4176,
+                "number": 1,
+                "index": 1,
+                "timestamp": "2026-09-05T05:00:00+00:00",
+            },
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert events == [
+        {
+            "area": 1,
+            "event": 4176,
+            "description": "zone 176 state",
+            "number": 1,
+            "index": 1,
+            "timestamp": "2026-09-05T05:00:00+00:00",
+        }
+    ]
+    await coordinator.async_shutdown()
+    await coordinator.async_disconnect()
+
+
 async def test_poll_interval_is_configurable(hass):
     """poll_interval flows through to DataUpdateCoordinator.update_interval."""
     coordinator = ElkDataUpdateCoordinator(
@@ -214,7 +257,7 @@ async def test_async_setup_scales_heartbeat_timeout_with_poll_interval(
     ],
 )
 async def test_arm_commands_use_correct_arm_level(hass, method_name, expected_level):
-    """Each arm-variant coordinator method sends the correct elkm1_lib ArmLevel."""
+    """Each arm-variant coordinator method sends the correct ArmLevel."""
     coordinator = _make_coordinator(hass)
     area = MagicMock()
     area.is_armed = MagicMock(return_value=False)
@@ -441,10 +484,11 @@ async def test_confirmed_command_times_out_instead_of_reporting_success(hass):
 
     with (
         patch.object(coordinator_module, "COMMAND_RESPONSE_TIMEOUT", 0.01),
-        pytest.raises(HomeAssistantError, match="was not confirmed"),
+        pytest.raises(HomeAssistantError) as exc_info,
     ):
         await coordinator.async_confirm_command(lambda: None, "AS", "test arm")
 
+    assert exc_info.value.translation_key == "command_not_confirmed"
     assert coordinator.last_command_timeout == "AS"
 
 
@@ -461,3 +505,795 @@ async def test_display_message_uses_area_helper(hass):
     )
 
     area.display_message.assert_called_once_with(1, True, 30, "Hi", "There")
+
+
+# --------------------------------------------------------------------------
+# Properties
+# --------------------------------------------------------------------------
+
+
+def test_broadcast_counts_returns_a_copy_not_the_live_dict(hass):
+    coordinator = _make_coordinator(hass)
+    counts = coordinator.broadcast_counts
+    counts["ZC"] = 999
+    assert coordinator.broadcast_counts["ZC"] == 0
+
+
+def test_transport_diagnostics_defaults_when_no_connection_manager(hass):
+    coordinator = _make_coordinator(hass)
+    diagnostics = coordinator.transport_diagnostics
+    assert diagnostics["transport_state"] == "stopped"
+    assert diagnostics["detected_baud"] is None
+    assert diagnostics["login_state"] == "unknown"
+    assert diagnostics["reconnect_count"] == 0
+    assert diagnostics["last_failure_category"] is None
+
+
+def test_transport_diagnostics_reflects_the_connection_manager(hass):
+    coordinator = _make_coordinator(hass)
+    manager = MagicMock()
+    manager.transport_state = "connected"
+    manager.detected_baud = 115200
+    manager.login_state = "authenticated"
+    manager.reconnect_count = 2
+    manager.last_failure_category = "timeout"
+    coordinator._connection_manager = manager
+
+    diagnostics = coordinator.transport_diagnostics
+
+    assert diagnostics["transport_state"] == "connected"
+    assert diagnostics["detected_baud"] == 115200
+    assert diagnostics["login_state"] == "authenticated"
+    assert diagnostics["reconnect_count"] == 2
+    assert diagnostics["last_failure_category"] == "timeout"
+
+
+def test_connected_false_before_any_elk_instance(hass):
+    coordinator = _make_coordinator(hass)
+    assert coordinator.connected is False
+
+
+def test_connected_reflects_the_elk_instance(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator._elk.is_connected.return_value = True
+    assert coordinator.connected is True
+
+
+# --------------------------------------------------------------------------
+# Connection URL construction
+# --------------------------------------------------------------------------
+
+
+def test_build_connection_url_raises_for_missing_serial_port(hass):
+    from custom_components.elkm1.const import CONNECTION_SERIAL
+
+    with pytest.raises(ValueError, match="Serial port not configured"):
+        _make_coordinator(hass, **{CONF_CONNECTION_TYPE: CONNECTION_SERIAL})
+
+
+def test_build_connection_url_raises_for_missing_host(hass):
+    with pytest.raises(ValueError, match="Host not configured"):
+        _make_coordinator(hass, **{CONF_HOST: ""})
+
+
+def test_build_connection_url_raises_for_unknown_connection_type(hass):
+    with pytest.raises(ValueError, match="Unknown connection type"):
+        _make_coordinator(hass, **{CONF_CONNECTION_TYPE: "carrier_pigeon"})
+
+
+def test_build_connection_url_defaults_the_network_port(hass):
+    coordinator = _make_coordinator(hass, **{CONF_HOST: "1.2.3.4"})
+    assert coordinator._url == "elk://1.2.3.4:2101"
+
+
+def test_obfuscated_url_passes_through_serial_urls_unredacted(hass):
+    from custom_components.elkm1.const import CONF_SERIAL_PORT, CONNECTION_SERIAL
+
+    coordinator = _make_coordinator(
+        hass, **{CONF_CONNECTION_TYPE: CONNECTION_SERIAL, CONF_SERIAL_PORT: "COM3"}
+    )
+    assert coordinator._obfuscated_url() == "serial://COM3"
+
+
+def test_obfuscated_url_redacts_the_host_but_keeps_the_scheme(hass):
+    coordinator = _make_coordinator(hass)
+    assert coordinator._obfuscated_url() == "elk://<redacted>"
+
+
+def test_obfuscated_url_falls_back_when_there_is_no_scheme(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._url = "not-a-url"
+    assert coordinator._obfuscated_url() == "<redacted>"
+
+
+# --------------------------------------------------------------------------
+# _async_setup: secure network credentials and error handling
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("_patch_login", [True], indirect=True)
+async def test_async_setup_sends_configured_credentials_for_a_secure_scheme(hass, _patch_login):
+    from custom_components.elkm1.const import CONF_PASSWORD, CONF_USERNAME
+
+    coordinator = _make_coordinator(
+        hass,
+        **{CONF_HOST: "elks://1.2.3.4:2601", CONF_USERNAME: "admin", CONF_PASSWORD: "secret"},
+    )
+    captured_config: dict[str, object] = {}
+    from custom_components.elkm1.helpers.elk import Elk as RealElk
+
+    original_init = RealElk.__init__
+
+    def _spy_init(self, config, *args, **kwargs):
+        captured_config.update(config)
+        original_init(self, config, *args, **kwargs)
+
+    with patch.object(RealElk, "__init__", _spy_init):
+        await coordinator._async_setup()
+
+    assert captured_config["userid"] == "admin"
+    assert captured_config["password"] == "secret"
+    await coordinator.async_disconnect()
+
+
+async def test_async_setup_logs_recovery_only_after_a_prior_failure(hass, caplog):
+    """Companion to test_async_setup_logs_recovery_after_a_prior_failure -
+    same connected-writer fixture, but starting "already healthy" so the
+    recovery log must NOT fire (a real test of the `if not
+    self.last_update_success` guard, not just an always-silent one)."""
+
+    def fake_start(self) -> None:
+        writer = MagicMock()
+        writer.wait_closed = AsyncMock()
+        self.connection.writer = writer
+        self.elk._notifier.notify("login", {"succeeded": True})
+
+    coordinator = _make_coordinator(hass)
+    coordinator.last_update_success = True  # simulate "already healthy" - no recovery log expected
+
+    with (
+        patch(
+            "custom_components.elkm1.coordinator.ElkConnectionManager.start",
+            fake_start,
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        await coordinator._async_setup()
+
+    assert "connection recovered" not in caplog.text
+    await coordinator.async_disconnect()
+
+
+async def test_async_setup_logs_recovery_after_a_prior_failure(hass, caplog):
+    """The "recovered" log is only reachable when the panel is actually
+    connected at login time - `_patch_login`'s fake `start()` never opens a
+    real transport, so `elk.is_connected()` is always False there and this
+    branch needs its own fixture that also fakes a connected writer."""
+
+    def fake_start(self) -> None:
+        writer = MagicMock()
+        writer.wait_closed = AsyncMock()
+        self.connection.writer = writer
+        self.elk._notifier.notify("login", {"succeeded": True})
+
+    coordinator = _make_coordinator(hass)
+    coordinator.last_update_success = False  # simulate "was unavailable" - recovery log expected
+
+    with (
+        patch(
+            "custom_components.elkm1.coordinator.ElkConnectionManager.start",
+            fake_start,
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        await coordinator._async_setup()
+
+    assert "Elk-M1 connection recovered" in caplog.text
+    await coordinator.async_disconnect()
+
+
+async def test_async_setup_stops_the_manager_on_unexpected_cancellation(hass):
+    """A BaseException (e.g. task cancellation) during the login wait must
+    still tear down the connection manager and clear `_elk`, not leak it."""
+    coordinator = _make_coordinator(hass)
+
+    async def _raise_cancelled(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    with (
+        patch(
+            "custom_components.elkm1.coordinator.ElkConnectionManager.start",
+            lambda self: None,
+        ),
+        patch("asyncio.wait", _raise_cancelled),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await coordinator._async_setup()
+
+    assert coordinator._elk is None
+
+
+# --------------------------------------------------------------------------
+# Event-firing handlers
+# --------------------------------------------------------------------------
+
+
+def test_handle_keypad_change_fires_on_a_real_keypress(hass):
+    coordinator = _make_coordinator(hass)
+    events = []
+    hass.bus.async_listen("elkm1.keypad_key_pressed", lambda event: events.append(event.data))
+    keypad = SimpleNamespace(index=0, name="Front Door")
+
+    coordinator._handle_keypad_change(keypad, {"last_keypress": ("STAR", 11)})
+
+    assert events == [
+        {"keypad_id": 1, "keypad_name": "Front Door", "key": 11, "key_name": "STAR"}
+    ]
+
+
+def test_handle_keypad_change_ignores_unrelated_changesets(hass):
+    coordinator = _make_coordinator(hass)
+    events = []
+    hass.bus.async_listen("elkm1.keypad_key_pressed", lambda event: events.append(event.data))
+    keypad = SimpleNamespace(index=0, name="Front Door")
+
+    coordinator._handle_keypad_change(keypad, {"area": 1})
+    coordinator._handle_keypad_change(keypad, {"last_keypress": None})
+
+    assert events == []
+
+
+def test_handle_user_code_clears_attribution_for_an_invalid_code(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    events = []
+    hass.bus.async_listen("elkm1.user_code_entered", lambda event: events.append(event.data))
+
+    coordinator._handle_user_code("1234", -1, 0)
+
+    assert coordinator._last_user is None
+    assert events == [{"keypad_id": 1, "user_number": None, "valid": False}]
+
+
+def test_handle_keypad_detail_stores_the_full_status(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._handle_keypad_detail(0, 11, (2, 0, 1, 0, 0, 0), False, (2, 0, 0, 0, 0, 0, 0, 0))
+    assert coordinator._keypad_status[0] == {
+        "function_key_lights": [2, 0, 1, 0, 0, 0],
+        "bypass_requires_code": False,
+        "beep_chime_by_area": [2, 0, 0, 0, 0, 0, 0, 0],
+    }
+
+
+def test_handle_all_lights_ignores_an_undocumented_aggregate_code(hass, caplog):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator._elk.lights = [MagicMock() for _ in range(16)]
+
+    coordinator._handle_all_lights(0, 99)
+
+    for light in coordinator._elk.lights:
+        light.setattr.assert_not_called()
+    assert "Ignoring unknown ELK all-lights code" in caplog.text
+
+
+def test_handle_all_lights_is_a_noop_before_elk_is_connected(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._handle_all_lights(0, 2)  # must not raise
+
+
+def test_handle_command_timeout_records_the_message_code(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._handle_command_timeout("AS")
+    assert coordinator.last_command_timeout == "AS"
+
+
+def test_handle_disconnected_marks_the_manager_and_sets_update_error(hass):
+    coordinator = _make_coordinator(hass)
+    manager = MagicMock()
+    coordinator._connection_manager = manager
+
+    coordinator._handle_disconnected()
+
+    manager.mark_disconnected.assert_called_once()
+    assert coordinator.last_update_success is False
+
+
+def test_handle_timer_event_fires_with_the_correct_type(hass):
+    coordinator = _make_coordinator(hass)
+    events = []
+    hass.bus.async_listen("elkm1_timer_event", lambda event: events.append(event.data))
+
+    coordinator._handle_timer_event(0, True, 10, 0, ArmedStatus.ARMED_AWAY)
+
+    assert events == [
+        {"area": 1, "type": "exit", "timer1": 10, "timer2": 0, "armed_status": 1}
+    ]
+
+
+def test_handle_alarm_memory_lists_only_flagged_areas(hass):
+    coordinator = _make_coordinator(hass)
+    events = []
+    hass.bus.async_listen("elkm1_alarm_memory", lambda event: events.append(event.data))
+
+    coordinator._handle_alarm_memory([True, False, False, True])
+
+    assert events == [{"areas": [1, 4]}]
+
+
+def test_handle_zone_definitions_requests_voltage_for_analog_zones(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    zones = [MagicMock() for _ in range(2)]
+    coordinator._elk.zones = zones
+
+    coordinator._handle_zone_definitions([ZoneType.DISABLED, ZoneType.ANALOG_ZONE])
+
+    zones[0].get_voltage.assert_not_called()
+    zones[1].get_voltage.assert_called_once()
+
+
+def test_handle_zone_definitions_is_a_noop_before_elk_is_connected(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._handle_zone_definitions([ZoneType.ANALOG_ZONE])  # must not raise
+
+
+def test_handle_trouble_status_normalizes_and_pushes_a_snapshot(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._build_normalized_data = MagicMock(return_value=coordinator.data)
+    coordinator._handle_trouble_status("0" * 36)
+    assert coordinator._raw_trouble_status == "0" * 34
+
+
+# --------------------------------------------------------------------------
+# async_disconnect
+# --------------------------------------------------------------------------
+
+
+async def test_async_disconnect_logs_and_swallows_a_transport_error(hass, caplog):
+    coordinator = _make_coordinator(hass)
+    manager = AsyncMock()
+    manager.async_stop.side_effect = OSError("already closed")
+    coordinator._connection_manager = manager
+    coordinator._elk = MagicMock()
+
+    await coordinator.async_disconnect()
+
+    assert "Error disconnecting" in caplog.text
+    assert coordinator._elk is None
+
+
+async def test_async_disconnect_is_a_noop_without_a_manager(hass):
+    coordinator = _make_coordinator(hass)
+    await coordinator.async_disconnect()  # must not raise
+
+
+# --------------------------------------------------------------------------
+# _build_normalized_data edge cases
+# --------------------------------------------------------------------------
+
+
+def test_build_normalized_data_returns_cached_data_before_elk_is_connected(hass):
+    coordinator = _make_coordinator(hass)
+    assert coordinator._build_normalized_data() is coordinator.data
+
+
+def test_build_normalized_data_lists_bypassed_zones(hass):
+    coordinator = _make_coordinator(hass)
+    zone = SimpleNamespace(
+        index=0,
+        name="Front Door",
+        configured=True,
+        logical_status=ZoneLogicalStatus.BYPASSED,
+        definition=ZoneType.BURGLAR_ENTRY_EXIT_1,
+        triggered_alarm=False,
+        temperature=-60,
+    )
+    coordinator._elk = _normalized_elk(_area(), [zone])
+    data = coordinator._build_normalized_data()
+    assert data.bypassed_zones == ["Zone 1: Front Door"]
+
+
+def test_build_normalized_data_lists_active_outputs(hass):
+    coordinator = _make_coordinator(hass)
+    output = SimpleNamespace(index=2, name="Siren", configured=True, output_on=True)
+    elk = _normalized_elk(_area())
+    elk.outputs = [output]
+    coordinator._elk = elk
+    data = coordinator._build_normalized_data()
+    assert data.outputs_active == [2]
+    assert data.active_output_names == ["Output 3: Siren"]
+
+
+def test_build_normalized_data_finds_the_first_valid_zone_temperature(hass):
+    coordinator = _make_coordinator(hass)
+    cold_zone = SimpleNamespace(
+        index=0,
+        name="Attic",
+        configured=True,
+        logical_status=ZoneLogicalStatus.NORMAL,
+        definition=ZoneType.TEMPERATURE,
+        triggered_alarm=False,
+        temperature=-60,
+    )
+    warm_zone = SimpleNamespace(
+        index=1,
+        name="Basement",
+        configured=True,
+        logical_status=ZoneLogicalStatus.NORMAL,
+        definition=ZoneType.TEMPERATURE,
+        triggered_alarm=False,
+        temperature=68,
+    )
+    coordinator._elk = _normalized_elk(_area(), [cold_zone, warm_zone])
+    data = coordinator._build_normalized_data()
+    assert data.panel_temperature == 68
+
+
+def test_build_normalized_data_resolves_the_last_user_name(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._last_user = 2
+    elk = _normalized_elk(_area())
+    elk.users = MagicMock()
+    elk.users.username.return_value = "Sean"
+    coordinator._elk = elk
+    data = coordinator._build_normalized_data()
+    assert data.last_user_name == "Sean"
+
+
+def test_build_normalized_data_falls_back_to_a_generic_user_label(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._last_user = 2
+    elk = _normalized_elk(_area())
+    elk.users = MagicMock()
+    elk.users.username.return_value = ""
+    coordinator._elk = elk
+    data = coordinator._build_normalized_data()
+    assert data.last_user_name == "User 3"
+
+
+# --------------------------------------------------------------------------
+# _async_update_data error paths
+# --------------------------------------------------------------------------
+
+
+async def test_async_update_data_raises_when_not_connected(hass):
+    coordinator = _make_coordinator(hass)
+    with pytest.raises(UpdateFailed, match="Not connected"):
+        await coordinator._async_update_data()
+
+
+async def test_async_update_data_raises_update_failed_on_timeout(hass):
+    coordinator = _make_coordinator(hass)
+    elk = MagicMock()
+    elk.is_connected.return_value = True
+    coordinator._elk = elk
+
+    from custom_components.elkm1 import coordinator as coordinator_module
+
+    with (
+        patch.object(coordinator_module, "POLL_RESPONSE_TIMEOUT", 0.01),
+        pytest.raises(UpdateFailed, match="timed out waiting for"),
+    ):
+        await coordinator._async_update_data()
+
+
+async def test_async_update_data_raises_update_failed_when_send_fails(hass):
+    coordinator = _make_coordinator(hass)
+    elk = MagicMock()
+    elk.is_connected.return_value = True
+    elk.send.side_effect = ConnectionError("disconnected")
+    coordinator._elk = elk
+
+    with pytest.raises(UpdateFailed, match="could not be sent"):
+        await coordinator._async_update_data()
+
+
+# --------------------------------------------------------------------------
+# Command-guard and simple write-path error branches
+# --------------------------------------------------------------------------
+
+
+async def test_ensure_command_ready_rejects_when_disconnected(hass):
+    coordinator = _make_coordinator(hass)
+    with pytest.raises(HomeAssistantError) as exc_info:
+        coordinator._ensure_command_ready()
+    assert exc_info.value.translation_key == "panel_disconnected"
+
+
+async def test_ensure_command_ready_rejects_while_paused(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator._elk.is_connected.return_value = True
+    coordinator._elk.is_paused.return_value = True
+    with pytest.raises(HomeAssistantError) as exc_info:
+        coordinator._ensure_command_ready()
+    assert exc_info.value.translation_key == "elkrp_paused"
+
+
+async def test_async_queue_command_wraps_a_sender_exception(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator._elk.is_connected.return_value = True
+    coordinator._elk.is_paused.return_value = False
+
+    def _boom():
+        raise RuntimeError("boom")
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.async_queue_command(_boom, "test command")
+    assert exc_info.value.translation_key == "queue_command_failed"
+
+
+async def test_confirm_command_wraps_a_sender_exception(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator._elk.is_connected.return_value = True
+    coordinator._elk.is_paused.return_value = False
+
+    def _boom():
+        raise RuntimeError("boom")
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.async_confirm_command(_boom, "AS", "test command")
+    assert exc_info.value.translation_key == "send_command_failed"
+
+
+async def test_confirm_command_reraises_a_homeassistant_error_from_the_sender_unwrapped(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator._elk.is_connected.return_value = True
+    coordinator._elk.is_paused.return_value = False
+
+    def _boom():
+        raise HomeAssistantError("already the right kind of error")
+
+    with pytest.raises(HomeAssistantError, match="already the right kind of error"):
+        await coordinator.async_confirm_command(_boom, "AS", "test command")
+
+
+async def test_queue_command_returns_true_on_a_successful_send(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator._elk.is_connected.return_value = True
+    coordinator._elk.is_paused.return_value = False
+    sent = []
+
+    result = await coordinator.async_queue_command(lambda: sent.append(1), "test command")
+
+    assert result is True
+    assert sent == [1]
+
+
+async def test_alarm_trigger_is_rejected_the_protocol_has_no_panic_command(hass):
+    coordinator = _make_coordinator(hass)
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.async_alarm_trigger(0)
+    assert exc_info.value.translation_key == "panic_not_supported"
+
+
+async def test_execute_arm_cmd_raises_when_elk_is_unavailable(hass):
+    coordinator = _make_coordinator(hass)
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator._execute_arm_cmd(ArmLevel.ARMED_AWAY, 0)
+    assert exc_info.value.translation_key == "panel_unavailable"
+
+
+async def test_execute_arm_cmd_confirms_against_the_real_as_reply(hass):
+    """Exercises the real (non-mocked) async_confirm_command/predicate path,
+    not just the "already armed" early return."""
+    coordinator = _make_coordinator(hass)
+    area = MagicMock()
+    area.armed_status = ArmedStatus.DISARMED
+    elk = MagicMock()
+    elk.is_connected.return_value = True
+    elk.is_paused.return_value = False
+    elk.areas = [area]
+    handlers: dict[str, object] = {}
+    elk.add_handler.side_effect = lambda command, handler: handlers.update({command: handler})
+    elk.remove_handler.side_effect = lambda command, _handler: handlers.pop(command, None)
+    coordinator._elk = elk
+
+    def _arm(level, code):
+        handlers["AS"](armed_statuses=[ArmedStatus.ARMED_AWAY])
+
+    area.arm.side_effect = _arm
+
+    result = await coordinator._execute_arm_cmd(ArmLevel.ARMED_AWAY, 0, 4321)
+
+    assert result is True
+    area.arm.assert_called_once_with(ArmLevel.ARMED_AWAY, 4321)
+
+
+async def test_execute_arm_cmd_is_a_noop_when_already_at_the_target_level(hass):
+    coordinator = _make_coordinator(hass)
+    area = MagicMock()
+    area.armed_status = ArmedStatus.ARMED_AWAY
+    coordinator._elk = MagicMock()
+    coordinator._elk.areas = [area]
+
+    result = await coordinator._execute_arm_cmd(ArmLevel.ARMED_AWAY, 0)
+
+    assert result is True
+    area.arm.assert_not_called()
+    area.disarm.assert_not_called()
+
+
+async def test_alarm_arm_custom_bypass_arms_away(hass):
+    coordinator = _make_coordinator(hass)
+    area = MagicMock()
+    area.armed_status = ArmedStatus.DISARMED
+    coordinator._elk = MagicMock()
+    coordinator._elk.areas = [area]
+    coordinator.async_confirm_command = AsyncMock(side_effect=_confirm_immediately)
+
+    await coordinator.async_alarm_arm_custom_bypass(0, 4321)
+
+    area.arm.assert_called_once_with(ArmLevel.ARMED_AWAY, 4321)
+
+
+async def test_bypass_zone_raises_when_elk_is_unavailable(hass):
+    coordinator = _make_coordinator(hass)
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.bypass_zone(1)
+    assert exc_info.value.translation_key == "panel_unavailable"
+
+
+async def test_trigger_zone_sends_the_zone_trigger(hass):
+    coordinator = _make_coordinator(hass)
+    zone = MagicMock()
+    coordinator._elk = MagicMock()
+    coordinator._elk.zones = [zone]
+    coordinator.async_queue_command = AsyncMock(side_effect=_confirm_immediately)
+
+    await coordinator.trigger_zone(1)
+
+    zone.trigger.assert_called_once()
+
+
+async def test_trigger_zone_raises_when_elk_is_unavailable(hass):
+    coordinator = _make_coordinator(hass)
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.trigger_zone(1)
+    assert exc_info.value.translation_key == "panel_unavailable"
+
+
+async def test_bypass_area_raises_when_elk_is_unavailable(hass):
+    coordinator = _make_coordinator(hass)
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.bypass_area(0)
+    assert exc_info.value.translation_key == "panel_unavailable"
+
+
+async def test_clear_bypass_area_raises_when_elk_is_unavailable(hass):
+    coordinator = _make_coordinator(hass)
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.clear_bypass_area(0)
+    assert exc_info.value.translation_key == "panel_unavailable"
+
+
+async def test_display_message_raises_when_elk_is_unavailable(hass):
+    coordinator = _make_coordinator(hass)
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.display_message(0)
+    assert exc_info.value.translation_key == "panel_unavailable"
+
+
+async def test_speak_word_sends_the_word(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator.async_queue_command = AsyncMock(side_effect=_confirm_immediately)
+
+    await coordinator.speak_word(42)
+
+    coordinator._elk.panel.speak_word.assert_called_once_with(42)
+
+
+async def test_speak_word_raises_when_panel_is_unavailable(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator._elk.panel = None
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.speak_word(42)
+    assert exc_info.value.translation_key == "panel_unavailable"
+
+
+async def test_speak_phrase_sends_the_phrase(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator.async_queue_command = AsyncMock(side_effect=_confirm_immediately)
+
+    await coordinator.speak_phrase(7)
+
+    coordinator._elk.panel.speak_phrase.assert_called_once_with(7)
+
+
+async def test_speak_phrase_raises_when_panel_is_unavailable(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator._elk.panel = None
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.speak_phrase(7)
+    assert exc_info.value.translation_key == "panel_unavailable"
+
+
+async def test_set_panel_time_sends_the_clock_update(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator.async_confirm_command = AsyncMock(side_effect=_confirm_immediately)
+
+    await coordinator.set_panel_time()
+
+    coordinator._elk.panel.set_time.assert_called_once_with(None)
+
+
+async def test_set_panel_time_raises_when_panel_is_unavailable(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._elk = MagicMock()
+    coordinator._elk.panel = None
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await coordinator.set_panel_time()
+    assert exc_info.value.translation_key == "panel_unavailable"
+
+
+# --------------------------------------------------------------------------
+# _handle_voice_message (see docs/backlog.md - a known-broken feature;
+# these tests pin its *actual* current behavior, not the intended one)
+# --------------------------------------------------------------------------
+
+
+def test_handle_voice_message_ignores_the_real_two_positional_arg_call(hass):
+    """Element.add_callback always calls observer(self, self._changeset) -
+    two positional args - so args[-1] is the changeset dict, which fails
+    the isinstance(words, (list, tuple)) check and returns immediately.
+    This is the actual, currently-broken behavior, not the intended one."""
+    coordinator = _make_coordinator(hass)
+    events = []
+    hass.bus.async_listen("elkm1_voice_announcement", lambda event: events.append(event.data))
+
+    coordinator._handle_voice_message(MagicMock(), {"some": "changeset"})
+
+    assert events == []
+
+
+def test_handle_voice_message_translates_a_direct_word_list(hass):
+    """If ever called with a single list/tuple argument (not the real
+    two-positional-arg calling convention above), it does translate and fire."""
+    coordinator = _make_coordinator(hass)
+    events = []
+    hass.bus.async_listen("elkm1_voice_announcement", lambda event: events.append(event.data))
+
+    coordinator._handle_voice_message([471])
+
+    assert events == [{"source": "elk_m1", "raw_ids": [471], "message": "zone"}]
+
+
+def test_handle_voice_message_swallows_a_translation_error(hass):
+    coordinator = _make_coordinator(hass)
+    events = []
+    hass.bus.async_listen("elkm1_voice_announcement", lambda event: events.append(event.data))
+
+    coordinator._handle_voice_message(["not-an-int"])  # int(w) raises ValueError
+
+    assert events == []
+
+
+def test_handle_voice_message_translates_a_words_kwarg(hass):
+    coordinator = _make_coordinator(hass)
+    events = []
+    hass.bus.async_listen("elkm1_voice_announcement", lambda event: events.append(event.data))
+
+    coordinator._handle_voice_message(words=[471])
+
+    assert events == [{"source": "elk_m1", "raw_ids": [471], "message": "zone"}]
+
+
+def test_handle_voice_message_translates_a_changeset_kwarg(hass):
+    coordinator = _make_coordinator(hass)
+    events = []
+    hass.bus.async_listen("elkm1_voice_announcement", lambda event: events.append(event.data))
+
+    coordinator._handle_voice_message(changeset=[471])
+
+    assert events == [{"source": "elk_m1", "raw_ids": [471], "message": "zone"}]

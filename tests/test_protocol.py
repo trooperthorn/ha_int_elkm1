@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from elkm1_lib.const import AlarmState
 
+from custom_components.elkm1.helpers.elk.const import AlarmState
 from custom_components.elkm1.helpers.framing import (
     extract_frames,
     has_valid_length_and_checksum,
@@ -41,6 +41,28 @@ def test_checksum_rejects_corruption():
     frame = _wire("VN", "050003080000")
     assert has_valid_length_and_checksum(frame)
     assert not has_valid_length_and_checksum(frame[:-1] + "0")
+
+
+def test_checksum_rejects_a_length_field_mismatch():
+    frame = _wire("VN", "050003080000")
+    wrong_length = "FF" + frame[2:]
+    assert not has_valid_length_and_checksum(wrong_length)
+
+
+def test_checksum_rejects_non_hex_characters():
+    frame = _wire("VN", "050003080000")
+    corrupted = frame[:-2] + "ZZ"
+    assert not has_valid_length_and_checksum(corrupted)
+
+
+def test_checksum_rejects_a_too_short_frame():
+    assert not has_valid_length_and_checksum("06vn")
+
+
+def test_protocol_value_handles_a_plain_numeric_enum():
+    from custom_components.elkm1.helpers.elk.const import ZoneLogicalStatus
+
+    assert protocol_value(ZoneLogicalStatus.VIOLATED) == "2"
 
 
 @pytest.mark.parametrize("state", tuple("0123456789:;<=>?@AB"))

@@ -53,7 +53,7 @@ DISPLAY_MESSAGE_SERVICE_SCHEMA = vol.Schema(
         vol.Optional("line1", default=""): vol.All(cv.string, vol.Length(max=16)),
         vol.Optional("line2", default=""): vol.All(cv.string, vol.Length(max=16)),
         vol.Optional("beep", default=False): cv.boolean,
-        vol.Optional("clear", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=2)),
+        vol.Optional("clear", default=1): vol.All(vol.Coerce(int), vol.Range(min=0, max=2)),
         vol.Optional("timeout", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=65535)),
     }
 )
@@ -83,32 +83,36 @@ def _get_coordinator(service: ServiceCall) -> ElkDataUpdateCoordinator:
     prefix = service.data.get("prefix", "")
     coordinator = _find_coordinator_by_prefix(service.hass, prefix)
     if coordinator is None:
-        raise HomeAssistantError(f"No ElkM1 coordinator with prefix '{prefix}' found")
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="unknown_prefix",
+            translation_placeholders={"prefix": prefix},
+        )
     return coordinator
 
 
 async def _async_speak_word_service(service: ServiceCall) -> None:
-    """Speak a word via elkm1_lib's own Panel.speak_word() helper."""
+    """Speak a word via helpers.elk's own Panel.speak_word() helper."""
     coordinator = _get_coordinator(service)
     number = service.data["number"]
     await coordinator.speak_word(number)
 
 
 async def _async_speak_phrase_service(service: ServiceCall) -> None:
-    """Speak a phrase via elkm1_lib's own Panel.speak_phrase() helper."""
+    """Speak a phrase via helpers.elk's own Panel.speak_phrase() helper."""
     coordinator = _get_coordinator(service)
     number = service.data["number"]
     await coordinator.speak_phrase(number)
 
 
 async def _async_set_time_service(service: ServiceCall) -> None:
-    """Write the panel's real-time clock via elkm1_lib's own Panel.set_time() helper."""
+    """Write the panel's real-time clock via helpers.elk's own Panel.set_time() helper."""
     coordinator = _get_coordinator(service)
     await coordinator.set_panel_time(dt_util.now())
 
 
 async def _async_display_message_service(service: ServiceCall) -> None:
-    """Display a message on an area's keypads via elkm1_lib's own Area.display_message()."""
+    """Display a message on an area's keypads via helpers.elk's own Area.display_message()."""
     coordinator = _get_coordinator(service)
     await coordinator.display_message(
         area_index=service.data["area"] - 1,

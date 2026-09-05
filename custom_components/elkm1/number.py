@@ -5,15 +5,16 @@ from __future__ import annotations
 import logging
 from typing import Any, override
 
-from elkm1_lib.const import SettingFormat
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import DOMAIN
 from .coordinator import ElkDataUpdateCoordinator
 from .entity import ElkEntity, async_add_dynamic_entities
+from .helpers.elk.const import SettingFormat
 from .models import ElkRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ class ElkCounter(ElkEntity, NumberEntity):
     _attr_native_max_value = 65535
     _attr_native_step = 1
     _attr_mode = NumberMode.BOX
-    _attr_icon = "mdi:counter"
+    _attr_translation_key = "counter"
 
     def __init__(
         self, coordinator: ElkDataUpdateCoordinator, config_entry: ConfigEntry, index: int
@@ -96,7 +97,7 @@ class ElkCounter(ElkEntity, NumberEntity):
     @override
     def native_value(self) -> float | None:
         obj = self._get_obj()
-        return float(obj.value) if obj else None
+        return float(obj.value) if obj and obj.value is not None else None
 
     @override
     async def async_set_native_value(self, value: float) -> None:
@@ -167,7 +168,7 @@ class ElkCustomValue(ElkEntity, NumberEntity):
     @override
     def native_value(self) -> float | None:
         obj = self._get_obj()
-        if not obj or isinstance(obj.value, tuple):
+        if not obj or obj.value is None or isinstance(obj.value, tuple):
             return None
         return float(obj.value)
 
@@ -188,8 +189,12 @@ class ElkCustomValue(ElkEntity, NumberEntity):
 
     async def async_counter_refresh(self) -> None:
         """Not supported for custom values."""
-        raise HomeAssistantError("supported only on ElkM1 counter entities")
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="counter_only"
+        )
 
     async def async_counter_set(self, value: int) -> None:
         """Not supported for custom values."""
-        raise HomeAssistantError("supported only on ElkM1 counter entities")
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="counter_only"
+        )

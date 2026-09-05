@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import DOMAIN
 from .coordinator import ElkDataUpdateCoordinator
 from .entity import ElkEntity
 from .models import AreaData, ElkRuntimeData
@@ -72,6 +73,7 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
     )
     _attr_code_format = CodeFormat.NUMBER
     _attr_code_arm_required = True
+    _attr_translation_key = "area"
 
     def __init__(
         self,
@@ -83,8 +85,8 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
         area_num = area_index + 1
         super().__init__(coordinator, config_entry, f"alarm_panel_area_{area_num}")
         self._area_index = area_index
-        self._attr_name = f"Area {area_num}"
         self._attr_unique_id = f"{config_entry.entry_id}_area_{area_num}"
+        self._attr_translation_placeholders = {"area_num": str(area_num)}
 
     @property
     def area_data(self) -> AreaData:
@@ -193,7 +195,9 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
         try:
             return int(code)
         except ValueError as err:
-            raise HomeAssistantError("ELK-M1 PIN must contain numeric digits only") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="invalid_pin"
+            ) from err
 
     async def _async_run_command(self, coro: Any, action_desc: str) -> None:
         """Await a coordinator command, raising HomeAssistantError on failure."""
@@ -203,7 +207,13 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
             raise
         except Exception as err:
             raise HomeAssistantError(
-                f"Error {action_desc} area {self._area_index + 1}: {err}"
+                translation_domain=DOMAIN,
+                translation_key="area_command_failed",
+                translation_placeholders={
+                    "action": action_desc,
+                    "area_num": str(self._area_index + 1),
+                    "error": str(err),
+                },
             ) from err
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
@@ -253,7 +263,7 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
     async def async_alarm_trigger(self, code: str | None = None) -> None:
         """Reject panic control: ELK v1.90 exposes no third-party panic command."""
         raise HomeAssistantError(
-            "ELK-M1 protocol v1.90 does not support third-party panic triggering"
+            translation_domain=DOMAIN, translation_key="panic_not_supported"
         )
 
     async def async_alarm_arm_home_instant(self, code: str | None = None) -> None:

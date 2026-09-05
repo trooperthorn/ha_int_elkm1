@@ -88,11 +88,140 @@ async def test_bypass_and_clear_bypass_use_distinct_protocol_commands():
 
 async def test_alarm_trigger_fails_closed():
     panel = _panel(AreaData())
-    with pytest.raises(HomeAssistantError, match="does not support"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await panel.async_alarm_trigger("1234")
+    assert exc_info.value.translation_key == "panic_not_supported"
 
 
 async def test_invalid_pin_does_not_fall_back_to_configured_pin():
     panel = _panel(AreaData())
-    with pytest.raises(HomeAssistantError, match="numeric digits"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await panel.async_alarm_disarm("12A4")
+    assert exc_info.value.translation_key == "invalid_pin"
+
+
+def test_area_data_falls_back_to_a_default_when_this_area_is_not_in_coordinator_data():
+    panel = _panel(AreaData())
+    panel.coordinator.data.areas = {}  # this panel's area index (0) is missing
+    assert panel.area_data == AreaData()
+
+
+def test_alarm_state_pending_on_entry_delay_alone():
+    assert _panel(AreaData(entry_delay_active=True)).alarm_state == (
+        AlarmControlPanelState.PENDING
+    )
+
+
+async def test_disarm_with_no_code_defaults_to_zero():
+    panel = _panel(AreaData())
+    panel.coordinator.async_alarm_disarm = AsyncMock(return_value=True)
+
+    await panel.async_alarm_disarm(None)
+
+    panel.coordinator.async_alarm_disarm.assert_called_once_with(0, 0)
+
+
+def test_alarm_state_none_before_coordinator_has_data():
+    panel = _panel(AreaData())
+    panel.coordinator.data = None
+    assert panel.alarm_state is None
+
+
+def test_alarm_state_maps_arm_up_state_6_to_custom_bypass():
+    area_data = AreaData(arm_up_state=6, armed_status=1)
+    assert _panel(area_data).alarm_state == AlarmControlPanelState.ARMED_CUSTOM_BYPASS
+
+
+def test_changed_by_none_before_coordinator_has_data():
+    panel = _panel(AreaData())
+    panel.coordinator.data = None
+    assert panel.changed_by is None
+
+
+def test_changed_by_none_when_last_user_name_is_unknown():
+    panel = _panel(AreaData())
+    panel.coordinator.data.last_user_name = "Unknown"
+    assert panel.changed_by is None
+
+
+def test_changed_by_returns_the_resolved_user_name():
+    panel = _panel(AreaData())
+    panel.coordinator.data.last_user_name = "Sean"
+    assert panel.changed_by == "Sean"
+
+
+def test_extra_state_attributes_empty_before_coordinator_has_data():
+    panel = _panel(AreaData())
+    panel.coordinator.data = None
+    assert panel.extra_state_attributes == {}
+
+
+def test_extra_state_attributes_reports_full_panel_and_area_state():
+    area_data = AreaData(
+        entry_delay_active=True,
+        exit_delay_active=False,
+        entry_delay=15,
+        exit_delay=0,
+        panic_state=False,
+        alarm_memory=True,
+        alarm_state="0",
+    )
+    panel = _panel(area_data)
+    panel.coordinator.data.armed = True
+    panel.coordinator.data.armed_mode = "armed"
+    panel.coordinator.data.zones_faulted = [0]
+    panel.coordinator.data.faulted_zone_names = ["Zone 1: Front Door"]
+    panel.coordinator.data.outputs_active = [1]
+    panel.coordinator.data.active_output_names = ["Output 2: Siren"]
+    panel.coordinator.data.bypassed_zones = []
+    panel.coordinator.last_update_success = True
+
+    attrs = panel.extra_state_attributes
+
+    assert attrs["armed"] is True
+    assert attrs["connection_status"] == "Connected"
+    assert attrs["zones_faulted_count"] == 1
+    assert attrs["outputs_active_count"] == 1
+    assert attrs["alarm_memory"] is True
+    assert attrs["alarm_triggered"] is False
+
+
+def test_extra_state_attributes_reports_disconnected_status():
+    panel = _panel(AreaData())
+    panel.coordinator.last_update_success = False
+    assert panel.extra_state_attributes["connection_status"] == "Disconnected"
+
+
+@pytest.mark.parametrize(
+    ("method_name", "coordinator_method"),
+    [
+        ("async_alarm_arm_home", "async_alarm_arm_home"),
+        ("async_alarm_arm_away", "async_alarm_arm_away"),
+        ("async_alarm_arm_night", "async_alarm_arm_night"),
+        ("async_alarm_arm_vacation", "async_alarm_arm_vacation"),
+        ("async_alarm_arm_custom_bypass", "async_alarm_arm_custom_bypass"),
+        ("async_alarm_arm_home_instant", "async_alarm_arm_home_instant"),
+        ("async_alarm_arm_night_instant", "async_alarm_arm_night_instant"),
+    ],
+)
+async def test_each_arm_variant_delegates_to_its_matching_coordinator_method(
+    method_name, coordinator_method
+):
+    panel = _panel(AreaData())
+    setattr(panel.coordinator, coordinator_method, AsyncMock(return_value=True))
+
+    await getattr(panel, method_name)("1234")
+
+    getattr(panel.coordinator, coordinator_method).assert_awaited_once_with(0, 1234)
+
+
+async def test_run_command_wraps_a_homeassistant_error_from_the_coordinator_unchanged():
+    """A HomeAssistantError raised by the coordinator must propagate as-is,
+    not get double-wrapped by the generic Exception handler."""
+    panel = _panel(AreaData())
+    panel.coordinator.async_alarm_arm_home = AsyncMock(
+        side_effect=HomeAssistantError("already the right kind of error")
+    )
+
+    with pytest.raises(HomeAssistantError, match="already the right kind of error"):
+        await panel.async_alarm_arm_home("1234")

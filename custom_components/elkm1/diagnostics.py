@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
-from .models import ELKM1Data
+from .models import ElkRuntimeData
 
 TO_REDACT = {
     CONF_PASSWORD,
@@ -25,7 +25,7 @@ TO_REDACT = {
 
 
 def _serialize_element(element: Any) -> dict[str, Any]:
-    """Convert an elkm1_lib Element's public attrs into a JSON-safe dict."""
+    """Convert a helpers.elk Element's public attrs into a JSON-safe dict."""
     return {
         key: (value.name if isinstance(value, Enum) else value)
         for key, value in element.as_dict().items()
@@ -36,7 +36,7 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for config entry."""
-    elk_data: ELKM1Data = entry.runtime_data
+    elk_data: ElkRuntimeData = entry.runtime_data
     coordinator = elk_data.coordinator
     data = coordinator.data if coordinator else None
 

@@ -20,11 +20,7 @@
   "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/trooperthorn/ha_int_elkm1/issues",
-  "loggers": [
-    "elkm1_lib"
-  ],
   "requirements": [
-    "elkm1-lib==2.2.15",
     "serialx==1.9.0"
   ],
   "version": "2026.09.04.2"

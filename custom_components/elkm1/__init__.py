@@ -149,7 +149,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElkM1ConfigEntry) -> boo
     except Exception as err:
         await coordinator.async_disconnect()
         raise ConfigEntryNotReady(
-            f"Timed out or failed connecting to {connection_url}"
+            translation_domain=DOMAIN,
+            translation_key="cannot_connect",
+            translation_placeholders={"connection_url": connection_url},
         ) from err
 
     # Not awaited: diagnostic only, and it sleeps to let broadcasts arrive.
