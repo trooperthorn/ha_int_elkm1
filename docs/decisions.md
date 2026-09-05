@@ -447,3 +447,27 @@ two new services, `elkm1.alarm_force_arm_away`/`elkm1.alarm_force_arm_stay`, so 
 just from the script. Rejected: leaving force-arm coordinator-only, since a capability
 that only script code can reach isn't something Sean can exercise against his actual
 panel while zones stay disconnected for other reasons in the future.
+
+## 2026-09-05, `PORT_SETTLE_DELAY` added to the baud probe
+
+A real production incident right after moving the panel from bench testing back to its
+install: the config flow's serial probe (`helpers/baud_probe.py`'s `open_probed_serial`)
+tried all nine standard baud rates and got no `VN` reply on any of them
+(`BaudProbeError`), immediately after the panel was physically reconnected. A full Home
+Assistant restart resolved it on the next attempt with no other change. Sean confirmed no
+other `elkm1` config entry existed for that port at the time, ruling out two processes
+contending for the same serial device. That leaves the USB-serial DTR-reset/settling
+quirk already noted (unverified until now) in `docs/design.md`'s "Unverified" section as
+the likely cause: `open_serial_connection` toggles DTR on every open, some RS-232
+UART bridges treat that as a reset and need a moment to recover, and the probe sweep
+opens and closes the port up to nine times back-to-back with no pause at all - easily
+enough to blow through every rate before the hardware settled once, while a full restart's
+extra elapsed boot time gave it enough time by chance.
+
+`_try_baud` now awaits `PORT_SETTLE_DELAY` (0.5s) immediately after opening the port and
+before sending the `vn` probe command, on every attempt in the sweep. Rejected: a settle
+delay only before the first attempt, since every attempt re-opens the port at a new baud
+rate and re-triggers the same DTR toggle, not just the first one. Rejected: leaving this
+undiagnosed since the restart "fixed" it - a five-minute mitigation that costs half a
+second per baud attempt is worth having even though the root cause can't be proven with
+certainty from a single field incident (see the "Unverified" note this leaves behind).

@@ -30,6 +30,16 @@ STANDARD_BAUD_RATES: tuple[int, ...] = (
 
 # Generous on purpose: the manual says multi-second command latency is normal.
 PROBE_RESPONSE_TIMEOUT = 2.0
+
+# DTR toggles on every serial port open by default; some panels/UART bridges
+# treat that as a reset and need a moment to recover before they'll answer a
+# probe - see docs/protocol.md's DTR-reset/settling note. Confirmed by a real
+# production incident: every baud rate in a sweep failed once, right after
+# the panel was physically reconnected, then succeeded after a full Home
+# Assistant restart gave the hardware more elapsed time to settle. See
+# docs/decisions.md 2026-09-05.
+PORT_SETTLE_DELAY = 0.5
+
 _DECODE_ERRORS = (ValueError, AttributeError)
 _PROBE_ERRORS = (TimeoutError, asyncio.IncompleteReadError, OSError, ValueError)
 
@@ -55,6 +65,7 @@ async def _try_baud(
     writer: asyncio.StreamWriter | None = None
     try:
         reader, writer = await serialx.open_serial_connection(url=port, baudrate=baud)
+        await asyncio.sleep(PORT_SETTLE_DELAY)
         writer.write(_build_vn_command())
         await writer.drain()
         read_buffer = ""
