@@ -800,12 +800,18 @@ def test_handle_disconnected_marks_the_manager_and_sets_update_error(hass):
     assert coordinator.last_update_success is False
 
 
-def test_handle_timer_event_fires_with_the_correct_type(hass):
+async def test_handle_timer_event_fires_with_the_correct_type(hass):
+    """async: EventBus.async_fire() queues rather than delivers immediately
+    when called while another dispatch is in flight (a prior test's
+    teardown can still have one scheduled) - await async_block_till_done()
+    so a queued dispatch is flushed before asserting, instead of relying on
+    synchronous delivery."""
     coordinator = _make_coordinator(hass)
     events = []
     hass.bus.async_listen("elkm1_timer_event", lambda event: events.append(event.data))
 
     coordinator._handle_timer_event(0, True, 10, 0, ArmedStatus.ARMED_AWAY)
+    await hass.async_block_till_done()
 
     assert events == [
         {"area": 1, "type": "exit", "timer1": 10, "timer2": 0, "armed_status": 1}
