@@ -17,7 +17,7 @@ from custom_components.elkm1.binary_sensor import (
 )
 from custom_components.elkm1.helpers.elk.const import ZoneLogicalStatus, ZoneType
 from custom_components.elkm1.helpers.elk.zones import Zone
-from custom_components.elkm1.models import ElkPanelData, ElkRuntimeData
+from custom_components.elkm1.models import AreaData, ElkPanelData, ElkRuntimeData
 
 
 def _make_zone(index: int, definition: ZoneType, area: int = 0, name: str = "") -> Zone:
@@ -281,6 +281,36 @@ async def test_zone_binary_sensor_appears_once_configured_after_setup(
         e for batch in added_batches for e in batch if getattr(e, "_zone_index", None) == 0
     ]
     assert len(zone_entities) == 1
+
+
+async def test_area_openings_setup_uses_real_area_indices_not_a_contiguous_range(
+    hass, mock_network_entry
+):
+    """A panel can have a gap (e.g. Area 2 never programmed) while a later
+    area (e.g. Area 8) is real. range(num_areas) would create a sensor for
+    the unconfigured gap and skip the real later area entirely - see
+    docs/decisions.md 2026-09-05."""
+    coordinator = _FakeCoordinator(
+        ElkPanelData(num_areas=3, areas={0: AreaData(), 2: AreaData(), 7: AreaData()})
+    )
+    mock_network_entry.add_to_hass(hass)
+    mock_network_entry.runtime_data = ElkRuntimeData(
+        prefix="",
+        mac=mock_network_entry.unique_id,
+        auto_configure=True,
+        config={},
+        coordinator=coordinator,
+    )
+
+    added: list = []
+
+    def _async_add_entities(new_entities):
+        added.extend(new_entities)
+
+    await async_setup_entry(hass, mock_network_entry, _async_add_entities)
+
+    opening_sensors = [e for e in added if isinstance(e, ElkAreaOpeningsBinarySensor)]
+    assert {s._area_index for s in opening_sensors} == {0, 2, 7}
 
 
 async def test_temperature_and_analog_zones_get_no_binary_sensor(hass, mock_network_entry):

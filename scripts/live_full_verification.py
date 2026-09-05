@@ -57,6 +57,7 @@ import sys
 import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -87,13 +88,26 @@ def _print_catalog(steps: list[Step]) -> None:
     )
 
 
-def _ask(prompt: str) -> bool:
-    answer = input(f"{prompt} [type 'yes' to proceed, anything else to skip]: ").strip()
-    return answer.lower() == "yes"
+async def _ask(prompt: str) -> bool:
+    """Prompt for confirmation without blocking the event loop.
+
+    `input()` is a blocking call - awaiting it directly would freeze this
+    process's entire asyncio loop (the serial read task, the coordinator's
+    periodic poll, everything) for as long as a human takes to answer. Run
+    it on a worker thread instead so background traffic keeps flowing while
+    we wait. Confirmed live: without this, a periodic poll or an in-flight
+    command's reply that arrives while a prompt is sitting unanswered gets
+    starved, then collides with whatever the next confirmed step sends the
+    moment the loop resumes - see docs/decisions.md.
+    """
+    answer = await asyncio.to_thread(
+        input, f"{prompt} [type 'yes' to proceed, anything else to skip]: "
+    )
+    return answer.strip().lower() == "yes"
 
 
-def _ask_int(prompt: str) -> int | None:
-    raw = input(f"{prompt} (or Enter to skip): ").strip()
+async def _ask_int(prompt: str) -> int | None:
+    raw = (await asyncio.to_thread(input, f"{prompt} (or Enter to skip): ")).strip()
     if not raw:
         return None
     try:
@@ -111,10 +125,11 @@ class Context:
         self.coordinator = coordinator
         self._code: str | None = None
 
-    def code(self) -> str:
+    async def code(self) -> str:
         if self._code is None:
-            self._code = getpass.getpass(
-                "Enter the panel user code for this and any later step that needs it: "
+            self._code = await asyncio.to_thread(
+                getpass.getpass,
+                "Enter the panel user code for this and any later step that needs it: ",
             )
         return self._code
 
@@ -132,6 +147,26 @@ async def _step_snapshot(ctx: Context) -> None:
             area_data.alarm_state,
             area_data.armed_status,
             area_data.arm_up_state,
+        )
+
+    # "area >= 0" is set only once the panel's own KA reply reports that
+    # keypad slot as actually enrolled - unlike zones/outputs/etc, a keypad
+    # has no separate "configured" text-name requirement to show up here.
+    enrolled_keypads = [k for k in data.keypads if getattr(k, "area", -1) >= 0]
+    if enrolled_keypads:
+        _LOGGER.info("--- Enrolled keypads: %d ---", len(enrolled_keypads))
+        for keypad in enrolled_keypads:
+            _LOGGER.info(
+                "  keypad %d: name=%r area=%d temperature=%s",
+                keypad.index + 1,
+                getattr(keypad, "name", None),
+                keypad.area + 1,
+                getattr(keypad, "temperature", None),
+            )
+    else:
+        _LOGGER.info(
+            "--- No keypads currently report an assigned area (KA) - "
+            "display_message/speak_word have nowhere to show up. ---"
         )
 
 
@@ -155,10 +190,10 @@ async def _step_entity_states(ctx: Context) -> None:
 
 
 async def _step_display_message(ctx: Context) -> None:
-    area = _ask_int("Which area's keypads should show the test message? (1-8)")
+    area = await _ask_int("Which area's keypads should show the test message? (1-8)")
     if area is None:
         return
-    if not _ask(f"About to send a display message to area {area}'s keypads"):
+    if not await _ask(f"About to send a display message to area {area}'s keypads"):
         return
     await ctx.coordinator.display_message(
         area_index=area - 1, line1="HA Verify", line2="Function Test", clear=1
@@ -167,17 +202,17 @@ async def _step_display_message(ctx: Context) -> None:
 
 
 async def _step_speak(ctx: Context) -> None:
-    number = _ask_int("Word number to speak (0-799, see vocabulary.py)")
+    number = await _ask_int("Word number to speak (0-799, see vocabulary.py)")
     if number is None:
         return
-    if not _ask(f"About to send speak_word({number}) - listen for audio from a keypad"):
+    if not await _ask(f"About to send speak_word({number}) - listen for audio from a keypad"):
         return
     await ctx.coordinator.speak_word(number)
     _LOGGER.info("Sent. If a keypad has a speaker, it may have just spoken.")
 
 
 async def _step_counter(ctx: Context) -> None:
-    index = _ask_int("Counter number to round-trip a test value through (1-64)")
+    index = await _ask_int("Counter number to round-trip a test value through (1-64)")
     if index is None:
         return
     counters = ctx.coordinator.data.counters
@@ -186,7 +221,7 @@ async def _step_counter(ctx: Context) -> None:
         return
     obj = counters[index - 1]
     original = getattr(obj, "value", None)
-    if not _ask(
+    if not await _ask(
         f"About to write counter {index} to 12345 then restore it to {original!r}"
     ):
         return
@@ -201,21 +236,29 @@ async def _step_counter(ctx: Context) -> None:
 
 
 async def _step_set_time(ctx: Context) -> None:
-    if not _ask("About to write the panel's real-time clock to the current time"):
+    if not await _ask("About to write the panel's real-time clock to the current time"):
         return
-    from homeassistant.util import dt as dt_util
-
-    await ctx.coordinator.set_panel_time(dt_util.now())
+    # Deliberately not homeassistant.util.dt.now(): this script's hass
+    # instance comes from pytest_homeassistant_custom_component's test
+    # harness, which hardcodes hass.config.time_zone to "US/Pacific"
+    # regardless of where this machine (or the panel) actually is - using it
+    # here would silently write the wrong wall-clock time to a real panel.
+    # The real system clock is what actually matters for a live write.
+    now = datetime.now().astimezone()
+    _LOGGER.info("Writing panel clock to this machine's local time: %s", now)
+    await ctx.coordinator.set_panel_time(now)
     _LOGGER.info("Sent. Check a keypad's clock display if it has one.")
 
 
 async def _step_zone_bypass(ctx: Context) -> None:
-    zone = _ask_int("Zone number to bypass then immediately un-bypass (1-208)")
+    zone = await _ask_int("Zone number to bypass then immediately un-bypass (1-208)")
     if zone is None:
         return
-    if not _ask(f"About to bypass zone {zone}, confirm the change, then clear the bypass"):
+    if not await _ask(
+        f"About to bypass zone {zone}, confirm the change, then clear the bypass"
+    ):
         return
-    code = ctx.code()
+    code = await ctx.code()
     await ctx.coordinator.bypass_zone(zone, code)
     await asyncio.sleep(1.0)
     zones = ctx.coordinator.data.zones
@@ -226,7 +269,7 @@ async def _step_zone_bypass(ctx: Context) -> None:
 
 
 async def _step_arm_disarm(ctx: Context) -> None:
-    area = _ask_int("Area number to arm-away then disarm (1-8)")
+    area = await _ask_int("Area number to arm-away then disarm (1-8)")
     if area is None:
         return
     area_index = area - 1
@@ -236,38 +279,74 @@ async def _step_arm_disarm(ctx: Context) -> None:
         if getattr(z, "area", -1) == area_index
         and str(getattr(z, "logical_status", "")).endswith("VIOLATED")
     ]
+
+    use_bypass = False
     if violated:
         print(
-            f"  REFUSING: area {area} has {len(violated)} violated zone(s) assigned "
-            "to it. Arming with a violated zone risks an immediate real alarm - see "
-            "docs/live_qualification.md. Clear or bypass those zones first if you "
-            "want to test this area, or pick a different area."
+            f"  area {area} has {len(violated)} violated zone(s) assigned to it "
+            "(e.g. bench-disconnected sensors). Arming normally would refuse or "
+            "risk an immediate real alarm - see docs/live_qualification.md."
         )
+        use_bypass = await _ask(
+            f"Bypass those {len(violated)} zone(s) first (zb999), arm-away, then "
+            "disarm and clear the bypass - test the arm/disarm round trip anyway"
+        )
+        if not use_bypass:
+            print("  Skipping: pick a different area, or clear/bypass its zones first.")
+            return
+    elif not await _ask(f"About to arm area {area} (arm-away) then disarm it"):
         return
-    if not _ask(f"About to arm area {area} (arm-away) then disarm it"):
-        return
-    code = ctx.code()
-    try:
-        result = await ctx.coordinator.async_alarm_arm_away(area_index, int(code))
-        _LOGGER.info("Arm result: %s", result)
-        await asyncio.sleep(2.0)
+
+    code = await ctx.code()
+
+    def _log_area_status(when: str) -> None:
         data = ctx.coordinator.data.areas.get(area_index)
         if data:
             _LOGGER.info(
-                "area %d now: alarm_state=%s armed_status=%s arm_up_state=%s",
+                "area %d %s: alarm_state=%s armed_status=%s arm_up_state=%s "
+                "exit_delay_active=%s exit_delay=%s",
                 area,
+                when,
                 data.alarm_state,
                 data.armed_status,
                 data.arm_up_state,
+                data.exit_delay_active,
+                data.exit_delay,
             )
+
+    try:
+        if use_bypass:
+            bypass_result = await ctx.coordinator.bypass_area(area_index, code)
+            _LOGGER.info("Bypass result: %s", bypass_result)
+        result = await ctx.coordinator.async_alarm_arm_away(area_index, int(code))
+        _LOGGER.info("Arm result: %s", result)
+        await asyncio.sleep(2.0)
+        _log_area_status("2s after arm")
+    except Exception:
+        # The confirmation predicate waits for armed_status to reach its
+        # final value (COMMAND_RESPONSE_TIMEOUT, 6s) - if this area has a
+        # real, nonzero exit delay programmed, the panel may legitimately
+        # still be counting down well past that window even though the arm
+        # command was accepted. Log the live status now, before disarming,
+        # so a timeout here can be told apart from a genuinely rejected
+        # command instead of just showing a bare traceback.
+        _LOGGER.exception(
+            "Arm command did not confirm within the timeout - logging live "
+            "status before restoring, to see whether the panel is actually "
+            "mid-exit-delay rather than having rejected the command"
+        )
+        _log_area_status("right after the arm timeout")
     finally:
         _LOGGER.info("Restoring: disarming area %d ...", area)
         result = await ctx.coordinator.async_alarm_disarm(area_index, int(code))
         _LOGGER.info("Disarm result: %s", result)
+        if use_bypass:
+            clear_result = await ctx.coordinator.clear_bypass_area(area_index, code)
+            _LOGGER.info("Clear-bypass result: %s", clear_result)
 
 
 async def _step_output(ctx: Context) -> None:
-    output = _ask_int("Output number to turn ON for 3 seconds then off (1-208)")
+    output = await _ask_int("Output number to turn ON for 3 seconds then off (1-208)")
     if output is None:
         return
     print(
@@ -276,7 +355,7 @@ async def _step_output(ctx: Context) -> None:
         "this way. Only proceed if you know what output %d actually drives."
         % output
     )
-    if not _ask(f"About to turn output {output} ON for 3 seconds"):
+    if not await _ask(f"About to turn output {output} ON for 3 seconds"):
         return
     outputs = ctx.coordinator.data.outputs
     if output - 1 >= len(outputs):
@@ -288,7 +367,7 @@ async def _step_output(ctx: Context) -> None:
 
 
 async def _step_task(ctx: Context) -> None:
-    task = _ask_int("Task number to activate (1-32)")
+    task = await _ask_int("Task number to activate (1-32)")
     if task is None:
         return
     print(
@@ -296,7 +375,7 @@ async def _step_task(ctx: Context) -> None:
         "unknown side effects. Only proceed if you know what task %d actually does."
         % task
     )
-    if not _ask(f"About to activate task {task}"):
+    if not await _ask(f"About to activate task {task}"):
         return
     tasks = ctx.coordinator.data.tasks
     if task - 1 >= len(tasks):
@@ -308,7 +387,7 @@ async def _step_task(ctx: Context) -> None:
 
 
 async def _step_light(ctx: Context) -> None:
-    light = _ask_int("PLC light address (1-256) to turn on then off")
+    light = await _ask_int("PLC light address (1-256) to turn on then off")
     if light is None:
         return
     print(
@@ -316,7 +395,7 @@ async def _step_light(ctx: Context) -> None:
         "lamp, an appliance, anything paired to that housecode/unit. Only proceed "
         "if you know what light %d actually is." % light
     )
-    if not _ask(f"About to turn light {light} on then off"):
+    if not await _ask(f"About to turn light {light} on then off"):
         return
     lights = ctx.coordinator.data.lights
     if light - 1 >= len(lights):
