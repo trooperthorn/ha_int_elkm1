@@ -306,3 +306,82 @@ dependency; a repeat against the new code is tracked as a follow-up, not blockin
 the object model and method names were deliberately preserved during the port) and any
 write/command path (`al`, `cn`, `cf`, `zb`, etc.) - this run was read-only status/version
 requests only.
+
+## Live run, 2026-09-05 (sixth follow-up): the real integration, post-`elkm1-lib` removal, plus a reusable script
+
+Closes the gap the fifth follow-up entry left open: this run drove the actual
+`custom_components/elkm1` code - `async_setup_entry`, `ElkDataUpdateCoordinator`, every
+platform's entity-registry forwarding, and `async_unload_entry` - against the same real
+panel on COM3, now running entirely on `helpers/elk/` with the `elkm1-lib` dependency
+already removed. The fourth follow-up entry above did this once against the *old*
+dependency; this is the first time the new, in-repo protocol stack has been exercised
+end-to-end this way, not just through `helpers/elk/message.py`'s functions directly (the
+fifth follow-up).
+
+**Method**: a new, permanent script, `scripts/live_debug_check.py`, replaces the one-off
+hand-assembled harness the fourth follow-up entry built and discarded. It uses
+`pytest_homeassistant_custom_component.common`'s `async_test_home_assistant`/
+`MockConfigEntry` helpers directly (importable standalone, without the package's `plugins.py`,
+which needs `fcntl` and Linux/WSL - see the `ha-dev-current` skill), copies
+`custom_components/elkm1` into a throwaway temp config dir so the loader has a real
+on-disk integration to discover without writing test-harness `.storage/` clutter into this
+repo, and forces a fresh custom-component scan (`hass.data.pop(loader.DATA_CUSTOM_COMPONENTS,
+None)`) so the loader doesn't just import the domain-colliding *built-in* core `elkm1`
+integration (`hassfest`'s own "Domain collides with built-in core integration" warning is
+real - a naive script that doesn't do this loads the wrong one, silently).
+
+**A harness-only false alarm, same class as the fourth follow-up's `BaudProbeError`**:
+`ElkDataUpdateCoordinator.__init__` doesn't pass `config_entry=` explicitly to
+`DataUpdateCoordinator.__init__`, so it relies on `homeassistant.config_entries.current_entry`
+(a `ContextVar`) to identify its owning entry - core logs this as a soft deprecation
+notice in real use (`custom_integration_behavior=ReportBehavior.IGNORE`), but the notice's
+fallback path (`homeassistant.helpers.frame.report_usage`) raises a hard `RuntimeError`
+when it cannot find a real integration-loader stack frame at all, which this standalone
+script's call stack never has (real production setup always does). Confirmed as harness-
+only, not a product bug, by patching `frame.report_usage` to a no-op for the duration of
+the setup call and rerunning - the same real hardware, same result either way. Not treated
+as a coordinator.py defect to fix: passing `config_entry` explicitly would be a reasonable,
+low-priority modernization (it's what the notice itself recommends), but it changes nothing
+about real, production runtime behavior, so it's left as a documented observation rather
+than acted on unprompted.
+
+**Live results, three separate runs (same panel, same result each time), zero exceptions
+or tracebacks in any run**:
+- Setup reached `ConfigEntryState.LOADED` every time; `panel_version=5.3.18` (matches
+  every earlier live run this session), `connected=True`, `last_update_success=True`.
+- Panel-reported element counts: 208 zones, 208 outputs, 16 thermostats, 64 counters, 20
+  settings, 32 tasks, 16 keypads, 256 lights (the panel's hardware maximums, not what's
+  actually wired/named).
+- **213 entities** forwarded to the entity registry: `alarm_control_panel` (7),
+  `binary_sensor` (44), `scene` (1), `sensor` (2), `switch` (159). Zero `climate`/`light`/
+  `number`/`time` entities - correct, not a gap: no thermostat, PLC light, counter, or
+  custom-value/time element on this bench panel has ever been *named* (`.configured`),
+  and `async_add_dynamic_entities` only forwards configured elements, matching every
+  platform file's documented behavior.
+- `num_areas=7` in this snapshot, one less than the eighth-area confirmation the second
+  follow-up entry above already established via `ua`'s bitmask and a real disarm to all 8
+  areas. Not a contradiction: `coordinator.py`'s `num_areas = max(len(configured_areas), 1)`
+  counts areas whose name had synced (`SD`) by the moment of the first refresh snapshot,
+  a timing-sensitive count, not a fixed hardware property the way `ua`'s per-code
+  authorization bitmask is. Left unverified whether the eighth area's name simply hadn't
+  arrived yet in this run's short window; not chased further since it doesn't affect
+  entity correctness (the panel's own area count feeds every area-scoped platform the
+  same way regardless of which specific run first observed it).
+- The panel's Global Programming broadcast settings were, as expected for a 10-second
+  observation window with nothing changing, reported unconfirmed by
+  `helpers/panel_settings.py` - and, confirmed live for the first time, this correctly
+  raised a real Repair issue (`repairs_issue_registry_updated` event observed directly,
+  `issue_id=outdated_panel_broadcasts_<entry_id>`), the Gold `repair-issues` rule's
+  implementation working end-to-end against real hardware, not just a mocked coordinator
+  in a unit test.
+- Two pre-existing, disabled-by-default trouble binary sensors (`EEPROM Memory Error`,
+  `Flash Memory Error`) were correctly registered but not added to the entity platform
+  ("Not adding entity ... because it's disabled") - the Gold `entity-disabled-by-default`
+  rule's implementation, also confirmed live.
+- Unload reached `ConfigEntryState.NOT_LOADED` cleanly every time, with the coordinator's
+  connection/task cleanup producing no warnings or lingering-task errors.
+
+**Not attempted in this run**: any write/command path (unchanged scope from every prior
+entry), the config flow's own validation step (this script calls `async_setup_entry`
+directly, the same shortcut the fourth follow-up entry used), and a soak duration beyond a
+short observation window.

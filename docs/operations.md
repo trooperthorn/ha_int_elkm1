@@ -16,6 +16,23 @@ installed second. The CI job asserts the installed core version so a harness
 bump that silently moves the core is caught. The harness imports
 `fcntl`, so on Windows the suite runs under WSL.
 
+## Live hardware debug check
+
+`scripts/live_debug_check.py` runs the real integration - config entry setup,
+the coordinator, entity-registry forwarding, clean unload - against a real
+panel, for debugging a connectivity problem or as a release-qualification
+step. It is not part of the CI gate (it touches a real serial/network
+connection) and is read-only by design: no arm/disarm/output/bypass/write
+command is ever sent. Unlike the full pytest suite, only the harness's
+`common.py` helpers are needed, not `plugins.py` (which imports `fcntl`), so
+this one script runs natively on Windows against a COM port with no WSL
+detour: `python scripts/live_debug_check.py --port COM3 -v`. See
+`docs/live_qualification.md`'s sixth 2026-09-05 entry for what it verified
+and why the harness needs a couple of workarounds (a domain collision with a
+built-in core `elkm1` integration; a `ContextVar`-only deprecation notice
+that only misfires because this script's call stack isn't a real
+integration-loader frame).
+
 ## Release path
 
 A merge to `main` is the only release path. Nobody edits the manifest
