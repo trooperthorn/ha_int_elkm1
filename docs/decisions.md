@@ -413,3 +413,37 @@ out even on a successful force-arm. Confirmation now waits for the resulting pla
 `_step_arm_disarm` in place of bypass-then-arm, since bypass reuses an already-tested,
 already-HA-exposed mechanism and is closer to how an installer would actually override a
 violated zone from a keypad.
+
+## 2026-09-05, arm/disarm and bypass diagnostics moved into the integration's debug logging
+
+Sean's live bench testing found Area 1 could not reach "ready to arm" while Front Door
+(zone 1) stays disconnected, and confirmed the reason is intentional: bypass is disabled
+in that zone's own options, along with every other door, by design (doors are the
+egress). That is a real panel policy, not a bug - `_execute_arm_cmd`, `al_encode`,
+`as_decode`, `zb_encode`, and every confirmation predicate involved were all re-verified
+correct during this investigation. Since Front Door can only be reconnected at the real
+install, not the bench, further arm/disarm testing needs to happen against the production
+connection - which the bench-only `scripts/live_full_verification.py` (a synthetic
+`pytest_homeassistant_custom_component` harness copied into a temp dir) cannot do.
+
+`coordinator.py`'s `async_confirm_command` (the shared choke point for every
+confirmed write - arm/disarm, zone/area bypass, thermostat emheat) now logs at DEBUG:
+the command being sent and what it's waiting for, confirmation success, and a timeout
+with the exact wait duration. `_execute_arm_cmd` additionally logs the target area's
+`alarm_state`/`armed_status`/`arm_up_state` immediately before sending and again after
+confirmation or timeout - the same snapshot the bench script's `_log_area_status` helper
+produced by hand. `bypass_zone` logs a zone's `logical_status` before and after its
+toggle; `bypass_area` logs it for every zone that was violated before the `zb999` call,
+specifically to catch the Front-Door case: a confirmed `True` only proves the panel
+processed the broadcast, not that every zone actually cleared, and the per-zone log line
+is what makes that distinction visible without hand-instrumenting a script. Enabling
+debug logging for this integration in Settings > Devices & Services now reproduces
+everything the bench script showed manually, against the real, currently-connected
+panel, with no synthetic harness involved.
+
+`alarm_control_panel.py` gained `async_alarm_force_arm_away`/`_stay` entity methods and
+two new services, `elkm1.alarm_force_arm_away`/`elkm1.alarm_force_arm_stay`, so force-arm
+(added to `coordinator.py` for the bench script) is reachable from a running install, not
+just from the script. Rejected: leaving force-arm coordinator-only, since a capability
+that only script code can reach isn't something Sean can exercise against his actual
+panel while zones stay disconnected for other reasons in the future.

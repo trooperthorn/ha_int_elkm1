@@ -293,6 +293,29 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
             self.coordinator.bypass_area(self._area_index, code), "bypassing"
         )
 
+    async def async_alarm_force_arm_away(self, code: str | None = None) -> None:
+        """Force arm-away, overriding a violated zone, via the
+        elkm1.alarm_force_arm_away service (a9, M1 5.3.0+). A zone with
+        bypass disabled in its own options is excluded from force-arm the
+        same way it is excluded from a normal bypass - see docs/decisions.md.
+        """
+        await self._async_run_command(
+            self.coordinator.async_alarm_force_arm_away(
+                self._area_index, self._get_code_val(code)
+            ),
+            "force arming away",
+        )
+
+    async def async_alarm_force_arm_stay(self, code: str | None = None) -> None:
+        """Force arm-stay, overriding a violated zone, via the
+        elkm1.alarm_force_arm_stay service (a:, M1 5.3.0+)."""
+        await self._async_run_command(
+            self.coordinator.async_alarm_force_arm_stay(
+                self._area_index, self._get_code_val(code)
+            ),
+            "force arming stay",
+        )
+
     async def async_alarm_clear_bypass(self, code: str | None = None) -> None:
         """Clear all area bypasses with the protocol's dedicated ``zb000`` form."""
         await self._async_run_command(

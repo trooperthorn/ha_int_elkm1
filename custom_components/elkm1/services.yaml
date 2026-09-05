@@ -62,6 +62,44 @@ alarm_arm_night_instant:
       selector:
         text:
 
+alarm_force_arm_away:
+  name: Alarm force arm away
+  description: >-
+    Force arm-away, overriding any violated zone that allows it. A zone with
+    bypass disabled in its own zone options (e.g. a main entry/exit door, by
+    installer design) is excluded from force-arm the same way it is excluded
+    from a normal bypass, and stays violated.
+  target:
+    entity:
+      integration: elkm1
+      domain: alarm_control_panel
+  fields:
+    code:
+      name: Code
+      description: Alarm code to authorize the force arm.
+      required: true
+      example: 1234
+      selector:
+        text:
+
+alarm_force_arm_stay:
+  name: Alarm force arm stay
+  description: >-
+    Force arm-stay, overriding any violated zone that allows it. Same
+    bypass-disabled exclusion as alarm_force_arm_away.
+  target:
+    entity:
+      integration: elkm1
+      domain: alarm_control_panel
+  fields:
+    code:
+      name: Code
+      description: Alarm code to authorize the force arm.
+      required: true
+      example: 1234
+      selector:
+        text:
+
 display_message:
   name: Display message
   description: Displays a message on all of the Elk-M1 keypads for an area.

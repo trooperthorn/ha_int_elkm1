@@ -236,6 +236,8 @@ def test_extra_state_attributes_reports_disconnected_status():
         ("async_alarm_arm_custom_bypass", "async_alarm_arm_custom_bypass"),
         ("async_alarm_arm_home_instant", "async_alarm_arm_home_instant"),
         ("async_alarm_arm_night_instant", "async_alarm_arm_night_instant"),
+        ("async_alarm_force_arm_away", "async_alarm_force_arm_away"),
+        ("async_alarm_force_arm_stay", "async_alarm_force_arm_stay"),
     ],
 )
 async def test_each_arm_variant_delegates_to_its_matching_coordinator_method(

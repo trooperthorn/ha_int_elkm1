@@ -671,12 +671,19 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
                 response.set()
 
         self._elk.add_handler(response_command, _response_handler)
+        _LOGGER.debug("Sending %s, awaiting a matching %s reply", description, response_command)
         try:
             sender()
             async with asyncio.timeout(COMMAND_RESPONSE_TIMEOUT):
                 await response.wait()
         except TimeoutError as err:
             self.last_command_timeout = response_command
+            _LOGGER.debug(
+                "%s did not confirm within %.1fs (no matching %s reply)",
+                description,
+                COMMAND_RESPONSE_TIMEOUT,
+                response_command,
+            )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="command_not_confirmed",
@@ -688,6 +695,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         except HomeAssistantError:
             raise
         except Exception as err:
+            _LOGGER.debug("%s failed to send: %s", description, err)
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="send_command_failed",
@@ -696,6 +704,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         finally:
             self._elk.remove_handler(response_command, _response_handler)
         self.last_command_timeout = None
+        _LOGGER.debug("Confirmed %s", description)
         return True
 
     async def async_alarm_disarm(self, area_index: int, code: int = 0) -> bool:
@@ -753,6 +762,19 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         ArmLevel.FORCE_ARM_TO_STAY_MODE: ArmedStatus.ARMED_STAY.value,
     }
 
+    def _log_area_snapshot(self, area_index: int, area: Any, when: str) -> None:
+        """Debug-log an area's live status - the same fields the bench
+        verification script logged manually before this was folded into the
+        integration itself. See docs/decisions.md 2026-09-05."""
+        _LOGGER.debug(
+            "area %d %s: alarm_state=%s armed_status=%s arm_up_state=%s",
+            area_index + 1,
+            when,
+            protocol_value(area.alarm_state),
+            protocol_value(area.armed_status),
+            self._get_enum_value(area.arm_up_state),
+        )
+
     async def _execute_arm_cmd(self, level: ArmLevel, area_index: int, code: int = 0) -> bool:
         """Arm/disarm an area using helpers/elk's own checksummed Area helpers."""
         if not self._elk:
@@ -763,7 +785,11 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         area = cast(Any, self._elk.areas[area_index])
         expected = self._FORCE_ARM_CONFIRMS_AS.get(level, level.value)
 
+        self._log_area_snapshot(area_index, area, f"before {level.name}")
         if protocol_value(area.armed_status) == expected:
+            _LOGGER.debug(
+                "area %d already at %s - no command sent", area_index + 1, level.name
+            )
             return True
 
         def _matches(payload: dict[str, Any]) -> bool:
@@ -776,7 +802,15 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             else:
                 area.arm(level, active_pin)
 
-        return await self.async_confirm_command(sender, "AS", "arm/disarm command", _matches)
+        try:
+            result = await self.async_confirm_command(
+                sender, "AS", f"arm/disarm command ({level.name})", _matches
+            )
+        except HomeAssistantError:
+            self._log_area_snapshot(area_index, area, f"after {level.name} did not confirm")
+            raise
+        self._log_area_snapshot(area_index, area, f"after {level.name} confirmed")
+        return result
 
     async def bypass_zone(self, zone_number: int, pin_code: str | None = None) -> bool:
         """Bypass a zone (1-indexed, matching the panel's own numbering)."""
@@ -788,7 +822,13 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         zone_index = zone_number - 1
         zone = cast(Any, self._elk.zones[zone_index])
         expected_bypassed = self._get_enum_value(zone.logical_status) != 3
-        return await self.async_confirm_command(
+        _LOGGER.debug(
+            "zone %d (%s) before bypass toggle: logical_status=%s",
+            zone_number,
+            getattr(zone, "name", "?"),
+            self._get_enum_value(zone.logical_status),
+        )
+        result = await self.async_confirm_command(
             lambda: zone.bypass(active_pin),
             "ZB",
             f"zone {zone_number} bypass toggle",
@@ -797,6 +837,13 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
                 and payload.get("zone_bypassed") is expected_bypassed
             ),
         )
+        _LOGGER.debug(
+            "zone %d (%s) after bypass toggle: logical_status=%s",
+            zone_number,
+            getattr(zone, "name", "?"),
+            self._get_enum_value(zone.logical_status),
+        )
+        return result
 
     async def unbypass_zone(self, zone_number: int, pin_code: str | None = None) -> bool:
         """Clear a zone's bypass by re-sending the toggle-only `zb` command."""
@@ -814,19 +861,41 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         )
 
     async def bypass_area(self, area_index: int, pin_code: str | None = None) -> bool:
-        """Bypass all violated burglar zones in an area with ``zb999``."""
+        """Bypass all violated burglar zones in an area with ``zb999``.
+
+        A confirmed ``True`` only means the panel processed the ``zb999``
+        broadcast, not that every violated zone actually became bypassed - a
+        zone with bypass disabled in its own zone options (e.g. a main
+        entry/exit door, by design) stays violated regardless. The per-zone
+        debug log below is how that distinction shows up. See
+        docs/decisions.md 2026-09-05.
+        """
         if not self._elk:
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="panel_unavailable"
             )
         active_pin = int(pin_code) if pin_code else int(self._pin or 0)
         area = cast(Any, self._elk.areas[area_index])
-        return await self.async_confirm_command(
+        violated_zones = [
+            zone
+            for zone in cast(Any, self._elk.zones)
+            if getattr(zone, "area", -1) == area_index
+            and self._get_enum_value(zone.logical_status) == 2
+        ]
+        result = await self.async_confirm_command(
             lambda: area.bypass(active_pin),
             "ZB",
             f"area {area_index + 1} bypass",
             lambda payload: payload.get("zone_number") == 998,
         )
+        for zone in violated_zones:
+            _LOGGER.debug(
+                "  zone %d (%s) logical_status now: %s",
+                zone.index + 1,
+                getattr(zone, "name", "?"),
+                self._get_enum_value(zone.logical_status),
+            )
+        return result
 
     async def clear_bypass_area(self, area_index: int, pin_code: str | None = None) -> bool:
         """Clear all burglar-zone bypasses in an area with ``zb000``."""
