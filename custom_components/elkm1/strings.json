@@ -243,7 +243,7 @@
       "message": "Supported only on ElkM1 output switch entities"
     },
     "unknown_prefix": {
-      "message": "No ElkM1 coordinator with prefix '{prefix}' found"
+      "message": "No ElkM1 coordinator with prefix {prefix} found"
     },
     "invalid_pin": {
       "message": "ELK-M1 PIN must contain numeric digits only"
