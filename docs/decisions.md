@@ -3,6 +3,27 @@
 Dated decisions with the alternative rejected and why. Entries marked "recorded" were
 carried out of code comments on 2026-09-03; the decision itself predates that date.
 
+## 2026-09-04, `IC` wired for `changed_by`; Alarmo sync is one-way
+
+`coordinator.py` now attaches an `IC` handler and resolves the reporting user's name via
+`elk.users.username()` (already synced by the library through `sd`/`TextDescriptions.USER`,
+previously never read by this repository), feeding the standard `changed_by` attribute and a
+new `last_user_time`. `const.py`'s `ATTR_CHANGED_BY_KEYPAD`/`ATTR_CHANGED_BY_ID`/
+`ATTR_CHANGED_BY_TIME` were removed rather than reused: they were unused scaffolding for the
+same feature, and every other key in `extra_state_attributes` is already a bare string
+literal, not an `ATTR_*` import. Rejected: leaving `last_user`/`last_user_name` hardcoded to
+`None`/`"Unknown"` on every snapshot, which is what the code did before this change - accurate
+data was available from the library and simply never read.
+
+`blueprints/automation/alarmo_state_sync.yaml` mirrors ELK-M1's alarm state into Alarmo
+one-way (ELK-M1 -> Alarmo) using `skip_delay: true` and `force: true` on the Alarmo side.
+Rejected: a bidirectional sync (Alarmo arming the physical panel back), which would need a
+loop-prevention design this session did not verify is safe against Alarmo's own independent
+sensor-driven arming logic; rejected forwarding the transient `arming`/`pending` states, since
+ELK-M1's exit/entry delay has already completed in hardware by the time a stable armed state
+is reported, and letting Alarmo run its own delay on top of that would desync the mirror from
+the panel's actual state, which matters more on a security system than a forced/instant arm.
+
 ## 2026-09-03, entity services registered from `async_setup`
 
 All nine entity services are registered in `services.py` through

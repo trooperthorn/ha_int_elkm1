@@ -89,11 +89,12 @@ may arrive slightly after entity creation on first sync.
 
 See [`docs/cross_integration.md`](docs/cross_integration.md) for the full picture.
 Briefly: **Alarmo** and **Better Thermostat** get real code-level support (an
-Alarmo-auto-setup helper service, and a per-area door/window aggregate sensor built
-specifically to feed any climate integration's window-pause logic, not just Elk's own
-thermostats). **Davis Weather**, **Unifi Protect**, **Browser Mod**, and **ESP32
-Bluetooth Proxy** have no direct data link to the panel, so support there means
-standards-compliant entities plus ready-made
+Alarmo-auto-setup helper service, a one-way state-mirror blueprint that keeps Alarmo in
+sync with the physical panel's arm/disarm/alarm state with no artificial delay, and a
+per-area door/window aggregate sensor built specifically to feed any climate
+integration's window-pause logic, not just Elk's own thermostats). **Davis Weather**,
+**Unifi Protect**, **Browser Mod**, and **ESP32 Bluetooth Proxy** have no direct data
+link to the panel, so support there means standards-compliant entities plus ready-made
 [Blueprints](blueprints/automation/) rather than integration code.
 
 ## Services
