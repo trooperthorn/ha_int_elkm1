@@ -20,6 +20,15 @@ from custom_components.elkm1.helpers.baud_probe import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_settle_delay():
+    """PORT_SETTLE_DELAY is real time added on every port open; zero it here
+    so these tests stay fast. test_try_baud_waits_for_the_port_to_settle...
+    verifies the delay itself by patching asyncio.sleep directly instead."""
+    with patch("custom_components.elkm1.helpers.baud_probe.PORT_SETTLE_DELAY", 0):
+        yield
+
+
 def _wire(command: str, data: str = "") -> str:
     message = f"{len(data) + 6:02X}{command}{data}00"
     checksum = (256 - sum(map(ord, message))) % 256
@@ -130,6 +139,38 @@ async def test_try_baud_closes_writer_on_timeout() -> None:
 
     assert result is None
     assert writer.closed is True
+
+
+async def test_try_baud_waits_for_the_port_to_settle_before_writing() -> None:
+    """DTR toggles on every open(); some panels need a moment to recover
+    before they'll answer - see docs/protocol.md and docs/decisions.md
+    2026-09-05 (a real production incident: every baud rate in a sweep
+    failed once right after reconnecting the panel, then succeeded after a
+    full Home Assistant restart gave the hardware more time to settle)."""
+    calls: list[str] = []
+    reader = _Reader(b"")
+    writer = _Writer()
+    original_write = writer.write
+
+    def _tracked_write(data: bytes) -> None:
+        calls.append("write")
+        original_write(data)
+
+    writer.write = _tracked_write
+
+    async def _tracked_sleep(_delay: float) -> None:
+        calls.append("sleep")
+
+    with (
+        patch(
+            "custom_components.elkm1.helpers.baud_probe.serialx.open_serial_connection",
+            AsyncMock(return_value=(reader, writer)),
+        ),
+        patch("custom_components.elkm1.helpers.baud_probe.asyncio.sleep", _tracked_sleep),
+    ):
+        await _try_baud("COM1", 9600)
+
+    assert calls == ["sleep", "write"]
 
 
 async def test_open_probed_serial_tries_cached_baud_first() -> None:

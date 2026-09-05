@@ -69,9 +69,11 @@ Baud detection reuses `helpers/elk/message.py`'s `vn_encode()` and `decode()` so
 checksum and framing logic stays identical to the one place this repository implements it.
 A winning probe hands its open reader and writer back to the caller instead of closing and
 reopening the port; the second open wastes a round trip and, on some USB-serial adapters,
-trips DTR-reset or settling quirks. Reconnects try the cached rate first so they lock on
-immediately. `probe_baud` is the validation-only variant for the config flow and USB
-discovery, which need a yes or no and do not keep the connection.
+trips DTR-reset or settling quirks. `PORT_SETTLE_DELAY` gives the port a brief pause after
+every open, before sending the probe command, for the same reason - see `docs/decisions.md`
+2026-09-05. Reconnects try the cached rate first so they lock on immediately. `probe_baud`
+is the validation-only variant for the config flow and USB discovery, which need a yes or
+no and do not keep the connection.
 
 The network heartbeat window is scaled with the configured poll interval; the reasoning
 and the numbers are in `protocol.md`.
@@ -173,6 +175,7 @@ is fully online before running setup.
 
 ## Unverified
 
-- "Rapid close/reopen can trip DTR-reset or settling quirks on some USB-serial adapters"
-  (originally a comment in `helpers/baud_probe.py`): stated from field experience, not
-  reproduced under test.
+- Whether `PORT_SETTLE_DELAY` (`helpers/baud_probe.py`, added 2026-09-05) actually eliminates
+  the DTR-reset/settling failure it targets, versus just narrowing the window - the one real
+  incident behind it (`docs/decisions.md` 2026-09-05) resolved itself on a full Home Assistant
+  restart before the fix existed to compare against.
