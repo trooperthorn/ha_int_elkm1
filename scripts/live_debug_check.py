@@ -129,6 +129,22 @@ async def _run(repo_root: Path, port: str, prefix: str, listen_seconds: float) -
                     coordinator.connected,
                     coordinator.last_update_success,
                 )
+                _LOGGER.info(
+                    "zones_faulted=%s (%s)",
+                    data.zones_faulted,
+                    data.faulted_zone_names or "none",
+                )
+                for area_index, area_data in sorted(data.areas.items()):
+                    _LOGGER.info(
+                        "area %d: alarm_state=%s armed_status=%s arm_up_state=%s "
+                        "entry_delay_active=%s exit_delay_active=%s",
+                        area_index + 1,
+                        area_data.alarm_state,
+                        area_data.armed_status,
+                        area_data.arm_up_state,
+                        area_data.entry_delay_active,
+                        area_data.exit_delay_active,
+                    )
 
                 entity_reg = er.async_get(hass)
                 entities = [

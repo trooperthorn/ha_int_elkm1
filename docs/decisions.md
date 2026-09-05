@@ -3,6 +3,49 @@
 Dated decisions with the alternative rejected and why. Entries marked "recorded" were
 carried out of code comments on 2026-09-03; the decision itself predates that date.
 
+## 2026-09-05, `MESSAGE_RESPONSE_TIME` lowered from 5.0s to 1.5s after a live-hardware incident
+
+`scripts/live_full_verification.py`'s guided write-command pass against the real panel hit
+two real command-confirmation failures in one run: `set_panel_time` timed out waiting for
+`RR`, and moments later the periodic status refresh timed out waiting for all of
+`AS`/`AZ`/`CS`/`SS`/`LW` at once (`coordinator.py`'s `POLL_RESPONSE_TIMEOUT`, 12s). The wire
+log showed the actual cause: one `RR` reply arrived corrupted (`Invalid ELK-M1 message ...:
+Bad checksum`) - genuine, occasional real-world serial noise on the bench USB-serial link,
+correctly detected and rejected by `helpers/framing.py`'s checksum check rather than
+accepted as valid data.
+
+The bug was in the blast radius of that one lost reply, not the corruption itself.
+`helpers/elk/connection.py`'s `Connection._write_stream()` drains its outbound queue one
+item at a time, and for any item expecting a reply, blocks the *entire* queue - not just
+that one command - for up to `MESSAGE_RESPONSE_TIME` before giving up and moving to the
+next queued item. With `set_time`'s `rw` write queued directly ahead of the periodic poll's
+five status requests, one lost `RR` reply could stall the send of `AS`/`AZ`/`CS`/`SS`/`LW`
+long enough to blow through their own 12-second aggregate timeout, even though most or all
+of them would likely have succeeded if sent promptly. At the old 5.0s ceiling, a queue with
+six items ahead of each other (one write plus a five-command poll burst) had a worst case of
+30 seconds of pure per-item stalling from lost replies alone - comfortably capable of
+producing exactly the spurious "timed out waiting for: AS, AZ, CS, LW, SS" this run hit.
+
+Considered and rejected: removing the per-item wait entirely. The panel is documented
+elsewhere in this repo as having "one serialized command buffer with no flow control;
+writes must not overlap" - some pacing gap between writes is a real, physical constraint,
+not just defensive caution, and the coordinator's own `async_confirm_command`/
+`async_queue_command` already do their own separate, type-and-predicate-matched
+confirmation independently of this connection-level gate, so removing the gate risks
+reintroducing whatever overlap problem it was added to prevent, for no benefit this
+incident's root cause actually required.
+
+Fix: lowered `MESSAGE_RESPONSE_TIME` to 1.5s - real round trips measured across every live
+run this session were 50-350ms (a full five-command poll cycle completed in 1.74s per
+`docs/live_qualification.md`'s sixth entry), so 1.5s leaves several times that margin for
+jitter on a single command while capping the worst-case pileup from repeated lost replies to
+a fraction of what the 5.0s default produced. `coordinator.py`'s `POLL_RESPONSE_TIMEOUT`
+(12s) was left unchanged - it now has more comfortable headroom under the new ceiling, not
+less. Not yet re-verified live (the panel is not readily available for repeated bench
+testing); `tests/test_elk_connection.py` gained a direct assertion pinning the ceiling to a
+low value and a regression test confirming the drain loop still sends a second queued item
+after an earlier one's reply never arrives, rather than stalling indefinitely.
+
 ## 2026-09-05, Gold quality-scale: `translation_key` naming stops at entities whose name embeds live panel data
 
 Working through the Gold-tier `entity-translations` rule, most fixed-English entity names

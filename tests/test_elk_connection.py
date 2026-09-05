@@ -260,6 +260,45 @@ async def test_write_stream_notifies_timeout_when_no_reply_arrives(monkeypatch):
     await stream_task
 
 
+def test_message_response_time_is_short_relative_to_a_lost_reply_s_blast_radius():
+    """Every later queued write stalls for up to MESSAGE_RESPONSE_TIME behind
+    one lost/corrupted reply, not just the command that lost it (see
+    _write_stream's await_msg_response). Real round trips measured live
+    against hardware are ~50-350ms (docs/live_qualification.md 2026-09-05);
+    this pins the ceiling to a value that bounds that blast radius instead of
+    the 5.0s default that let a single lost reply cascade a full periodic
+    status refresh (AS/AZ/CS/SS/LW) past its own 12s aggregate timeout - see
+    docs/decisions.md 2026-09-05."""
+    import custom_components.elkm1.helpers.elk.connection as connection_module
+
+    assert connection_module.MESSAGE_RESPONSE_TIME <= 2.0
+
+
+async def test_write_stream_recovers_and_sends_a_second_item_after_the_first_times_out(
+    monkeypatch,
+):
+    """The drain loop must still send a later queued command after an earlier
+    one's reply never arrives - proves a lost reply merely delays, rather
+    than permanently blocks, everything queued behind it."""
+    import custom_components.elkm1.helpers.elk.connection as connection_module
+
+    monkeypatch.setattr(connection_module, "MESSAGE_RESPONSE_TIME", 0.01)
+    connection = Connection("elk://test", Notifier())
+    writer = MagicMock()
+    connection.writer = writer
+    connection.send(MagicMock(message="06as00", response_command="AS"))
+    connection.send(MagicMock(message="06az00", response_command="AZ"))
+
+    stream_task = asyncio.create_task(connection._write_stream())
+    await asyncio.sleep(0.1)
+
+    assert writer.write.call_count == 2
+
+    connection.writer = None
+    connection._check_write_queue.set()
+    await stream_task
+
+
 async def test_write_stream_exits_once_writer_is_cleared_and_queue_is_empty():
     connection = Connection("elk://test", Notifier())
     connection.writer = MagicMock()
