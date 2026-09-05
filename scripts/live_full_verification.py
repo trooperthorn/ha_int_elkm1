@@ -235,6 +235,37 @@ async def _step_counter(ctx: Context) -> None:
         _LOGGER.info("Restored to %s.", original)
 
 
+async def _step_custom_value(ctx: Context) -> None:
+    """Round-trip a custom value (`cw`/`CR`) - the write path shared by
+    number.py's ElkCustomValue and time.py's ElkTimeOfDay, distinct from the
+    Counter round-trip's `cs`/`CS` path and never exercised live before."""
+    index = await _ask_int("Custom value number to round-trip a test value through (1-20)")
+    if index is None:
+        return
+    settings = ctx.coordinator.data.settings
+    if index < 1 or index > len(settings):
+        print(f"  Custom value {index} doesn't exist on this panel - skipping.")
+        return
+    obj = settings[index - 1]
+    original = getattr(obj, "value", None)
+    is_time_of_day = str(getattr(obj, "value_format", "")).endswith("TIME_OF_DAY")
+    test_value: int | tuple[int, int] = (12, 34) if is_time_of_day else 4321
+    if not await _ask(
+        f"About to write custom value {index} to {test_value!r} then restore it to {original!r}"
+    ):
+        return
+    await ctx.coordinator.async_queue_command(
+        lambda: obj.set(test_value), f"custom value {index} set"
+    )
+    await asyncio.sleep(0.5)
+    _LOGGER.info("Wrote %r. Readback (may lag one poll): %s", test_value, getattr(obj, "value", None))
+    if original is not None:
+        await ctx.coordinator.async_queue_command(
+            lambda: obj.set(original), f"custom value {index} restore"
+        )
+        _LOGGER.info("Restored to %s.", original)
+
+
 async def _step_set_time(ctx: Context) -> None:
     if not await _ask("About to write the panel's real-time clock to the current time"):
         return
@@ -318,6 +349,22 @@ async def _step_arm_disarm(ctx: Context) -> None:
         if use_bypass:
             bypass_result = await ctx.coordinator.bypass_area(area_index, code)
             _LOGGER.info("Bypass result: %s", bypass_result)
+            await asyncio.sleep(1.0)
+            # bypass_area sends zb999, which the manual documents as bypassing
+            # only violated *burglar* zones - a 24-hour/fire/medical zone is
+            # correctly never bypassable this way. If arm still refuses next,
+            # this shows whether that's why: some zone(s) may still show
+            # VIOLATED here despite "Bypass result: True", because that result
+            # only confirms the panel processed the zb999 broadcast, not that
+            # every individual zone in the list actually changed state.
+            for zone in violated:
+                _LOGGER.info(
+                    "  zone %d (%s) definition=%s logical_status now: %s",
+                    zone.index + 1,
+                    getattr(zone, "name", "?"),
+                    getattr(zone, "definition", "?"),
+                    getattr(zone, "logical_status", "?"),
+                )
         result = await ctx.coordinator.async_alarm_arm_away(area_index, int(code))
         _LOGGER.info("Arm result: %s", result)
         await asyncio.sleep(2.0)
@@ -340,6 +387,97 @@ async def _step_arm_disarm(ctx: Context) -> None:
         _LOGGER.info("Restoring: disarming area %d ...", area)
         result = await ctx.coordinator.async_alarm_disarm(area_index, int(code))
         _LOGGER.info("Disarm result: %s", result)
+        if use_bypass:
+            clear_result = await ctx.coordinator.clear_bypass_area(area_index, code)
+            _LOGGER.info("Clear-bypass result: %s", clear_result)
+
+
+#: Every arm mode besides plain arm-away, which "Arm then disarm" already
+#: covers. async_alarm_arm_custom_bypass is deliberately not swept - it is a
+#: literal alias of arm-away in coordinator.py (same ArmLevel, same code
+#: path), not a distinct wire behavior to verify. See docs/decisions.md.
+_ARM_MODES: tuple[tuple[str, str], ...] = (
+    ("arm-home (stay)", "async_alarm_arm_home"),
+    ("arm-night", "async_alarm_arm_night"),
+    ("arm-vacation", "async_alarm_arm_vacation"),
+    ("arm-home-instant (stay-instant)", "async_alarm_arm_home_instant"),
+    ("arm-night-instant", "async_alarm_arm_night_instant"),
+    ("force-arm-away", "async_alarm_force_arm_away"),
+    ("force-arm-stay", "async_alarm_force_arm_stay"),
+)
+
+
+async def _step_arm_mode_sweep(ctx: Context) -> None:
+    """Exercise every arm mode besides arm-away, disarming between each."""
+    area = await _ask_int("Area number to sweep every other arm mode on (1-8)")
+    if area is None:
+        return
+    area_index = area - 1
+    violated = [
+        z
+        for z in ctx.coordinator.data.zones
+        if getattr(z, "area", -1) == area_index
+        and str(getattr(z, "logical_status", "")).endswith("VIOLATED")
+    ]
+
+    use_bypass = False
+    if violated:
+        print(
+            f"  area {area} has {len(violated)} violated zone(s) assigned to it. "
+            "Each mode below is still attempted (bypassing violated zones "
+            "first) so every mode's wire format and confirmation matching gets "
+            "exercised, even if the panel's own readiness policy - e.g. a "
+            "non-bypassable door - ultimately refuses to complete the arm. "
+            "See docs/decisions.md 2026-09-05."
+        )
+        use_bypass = await _ask(
+            f"Bypass those {len(violated)} zone(s) first (zb999), then sweep "
+            f"every other arm mode on area {area}, disarming after each"
+        )
+        if not use_bypass:
+            print("  Skipping: pick a different area, or clear/bypass its zones first.")
+            return
+    elif not await _ask(f"About to sweep every other arm mode on area {area}, disarming after each"):
+        return
+
+    code = await ctx.code()
+
+    def _log_area_status(when: str) -> None:
+        data = ctx.coordinator.data.areas.get(area_index)
+        if data:
+            _LOGGER.info(
+                "area %d %s: alarm_state=%s armed_status=%s arm_up_state=%s",
+                area,
+                when,
+                data.alarm_state,
+                data.armed_status,
+                data.arm_up_state,
+            )
+
+    try:
+        if use_bypass:
+            bypass_result = await ctx.coordinator.bypass_area(area_index, code)
+            _LOGGER.info("Bypass result: %s", bypass_result)
+            await asyncio.sleep(1.0)
+
+        for label, method_name in _ARM_MODES:
+            arm_fn = getattr(ctx.coordinator, method_name)
+            try:
+                result = await arm_fn(area_index, int(code))
+                _LOGGER.info("%s result: %s", label, result)
+                await asyncio.sleep(1.0)
+                _log_area_status(f"after {label}")
+            except Exception:
+                _LOGGER.exception(
+                    "%s did not confirm within the timeout - logging live status "
+                    "before disarming and moving to the next mode",
+                    label,
+                )
+                _log_area_status(f"right after the {label} timeout")
+            finally:
+                disarm_result = await ctx.coordinator.async_alarm_disarm(area_index, int(code))
+                _LOGGER.info("Disarm after %s: %s", label, disarm_result)
+    finally:
         if use_bypass:
             clear_result = await ctx.coordinator.clear_bypass_area(area_index, code)
             _LOGGER.info("Clear-bypass result: %s", clear_result)
@@ -438,6 +576,14 @@ def _build_steps() -> list[Step]:
             _step_counter,
         ),
         Step(
+            "Custom value round-trip",
+            "SAFE",
+            "Write a custom value (number or time-of-day) to a test value, read "
+            "it back, restore the original. Distinct wire path (cw/CR) from the "
+            "Counter round-trip (cs/CS), never exercised before.",
+            _step_custom_value,
+        ),
+        Step(
             "Set panel time",
             "CAUTION",
             "Write the panel's real-time clock to the current time.",
@@ -457,6 +603,16 @@ def _build_steps() -> list[Step]:
             "Arm-away one area then disarm it. Needs your passcode. Refuses to "
             "run if the area has any violated zone assigned to it.",
             _step_arm_disarm,
+            needs_code=True,
+        ),
+        Step(
+            "Arm mode sweep",
+            "MODERATE",
+            "Arm-home, arm-night, arm-vacation, both instant variants, and both "
+            "force-arm modes on one area, disarming after each. Needs your "
+            "passcode. Offers to bypass violated zones first, same as Arm then "
+            "disarm.",
+            _step_arm_mode_sweep,
             needs_code=True,
         ),
         Step(

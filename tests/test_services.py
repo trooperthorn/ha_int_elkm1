@@ -102,6 +102,8 @@ async def test_entity_services_register_without_platform_setup(hass) -> None:
         "alarm_clear_bypass",
         "alarm_arm_home_instant",
         "alarm_arm_night_instant",
+        "alarm_force_arm_away",
+        "alarm_force_arm_stay",
         "sensor_counter_refresh",
         "sensor_counter_set",
         "sensor_zone_bypass",

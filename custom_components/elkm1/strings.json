@@ -307,6 +307,26 @@
       },
       "name": "Alarm clear bypass"
     },
+    "alarm_force_arm_away": {
+      "description": "Force arm-away, overriding any violated zone that allows it. A zone with bypass disabled in its own zone options (e.g. a main entry/exit door, by installer design) is excluded from force-arm the same way it is excluded from a normal bypass, and stays violated.",
+      "fields": {
+        "code": {
+          "description": "Alarm code to authorize the force arm.",
+          "name": "Code"
+        }
+      },
+      "name": "Alarm force arm away"
+    },
+    "alarm_force_arm_stay": {
+      "description": "Force arm-stay, overriding any violated zone that allows it. Same bypass-disabled exclusion as alarm_force_arm_away.",
+      "fields": {
+        "code": {
+          "description": "[%key:component::elkm1::services::alarm_force_arm_away::fields::code::description%]",
+          "name": "Code"
+        }
+      },
+      "name": "Alarm force arm stay"
+    },
     "display_message": {
       "description": "Displays a message on all of the Elk-M1 keypads for an area.",
       "fields": {

@@ -1183,6 +1183,124 @@ async def test_force_arm_stay_confirms_against_armed_stay(hass):
     area.arm.assert_called_once_with(ArmLevel.FORCE_ARM_TO_STAY_MODE, 4321)
 
 
+async def test_execute_arm_cmd_logs_area_snapshot_before_and_after_confirm(hass, caplog):
+    """Debug logging is how a production install (which can't run the bench
+    script) gets the same before/after area-status detail that script showed
+    manually. See docs/decisions.md 2026-09-05."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.elkm1.coordinator")
+    coordinator = _make_coordinator(hass)
+    area = MagicMock()
+    area.armed_status = ArmedStatus.DISARMED
+    area.alarm_state = AlarmState.NO_ALARM_ACTIVE
+    area.arm_up_state = ArmUpState.READY_TO_ARM
+    elk = MagicMock()
+    elk.is_connected.return_value = True
+    elk.is_paused.return_value = False
+    elk.areas = [area]
+    handlers: dict[str, object] = {}
+    elk.add_handler.side_effect = lambda command, handler: handlers.update({command: handler})
+    elk.remove_handler.side_effect = lambda command, _handler: handlers.pop(command, None)
+    coordinator._elk = elk
+
+    def _arm(level, code):
+        handlers["AS"](armed_statuses=[ArmedStatus.ARMED_AWAY])
+
+    area.arm.side_effect = _arm
+
+    await coordinator.async_alarm_arm_away(0, 4321)
+
+    assert "area 1 before ARMED_AWAY" in caplog.text
+    assert "area 1 after ARMED_AWAY confirmed" in caplog.text
+
+
+async def test_execute_arm_cmd_logs_area_snapshot_on_timeout(hass, caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.elkm1.coordinator")
+    coordinator = _make_coordinator(hass)
+    area = MagicMock()
+    area.armed_status = ArmedStatus.DISARMED
+    area.alarm_state = AlarmState.NO_ALARM_ACTIVE
+    area.arm_up_state = ArmUpState.NOT_READY_TO_ARM
+    coordinator._elk = MagicMock()
+    coordinator._elk.areas = [area]
+    coordinator._elk.add_handler = MagicMock()
+    coordinator._elk.remove_handler = MagicMock()
+
+    with (
+        patch("custom_components.elkm1.coordinator.COMMAND_RESPONSE_TIMEOUT", 0.01),
+        pytest.raises(HomeAssistantError),
+    ):
+        await coordinator.async_alarm_arm_away(0, 4321)
+
+    assert "area 1 after ARMED_AWAY did not confirm" in caplog.text
+
+
+async def test_bypass_zone_logs_status_before_and_after(hass, caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.elkm1.coordinator")
+    coordinator = _make_coordinator(hass)
+    zone = MagicMock()
+    zone.name = "Front Door"
+    zone.logical_status = ZoneLogicalStatus.VIOLATED
+    elk = MagicMock()
+    elk.is_connected.return_value = True
+    elk.is_paused.return_value = False
+    elk.zones = [zone]
+    handlers: dict[str, object] = {}
+    elk.add_handler.side_effect = lambda command, handler: handlers.update({command: handler})
+    elk.remove_handler.side_effect = lambda command, _handler: handlers.pop(command, None)
+    coordinator._elk = elk
+
+    def _bypass(code):
+        handlers["ZB"](zone_number=0, zone_bypassed=True)
+
+    zone.bypass.side_effect = _bypass
+
+    await coordinator.bypass_zone(1, "4321")
+
+    assert "zone 1 (Front Door) before bypass toggle" in caplog.text
+    assert "zone 1 (Front Door) after bypass toggle" in caplog.text
+
+
+async def test_bypass_area_logs_each_previously_violated_zone_afterward(hass, caplog):
+    """A confirmed zb999 only means the panel processed the broadcast, not
+    that every zone actually bypassed - a zone with bypass disabled (e.g. a
+    main entry door) stays VIOLATED. This is the log line that reveals that
+    distinction in production. See docs/decisions.md 2026-09-05."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.elkm1.coordinator")
+    coordinator = _make_coordinator(hass)
+    area = MagicMock()
+    front_door = MagicMock()
+    front_door.index = 0
+    front_door.name = "Front Door"
+    front_door.area = 0
+    front_door.logical_status = ZoneLogicalStatus.VIOLATED
+    back_door = MagicMock()
+    back_door.index = 1
+    back_door.name = "Back Door"
+    back_door.area = 0
+    back_door.logical_status = ZoneLogicalStatus.VIOLATED
+    elk = MagicMock()
+    elk.is_connected.return_value = True
+    elk.is_paused.return_value = False
+    elk.areas = [area]
+    elk.zones = [front_door, back_door]
+    handlers: dict[str, object] = {}
+    elk.add_handler.side_effect = lambda command, handler: handlers.update({command: handler})
+    elk.remove_handler.side_effect = lambda command, _handler: handlers.pop(command, None)
+    coordinator._elk = elk
+
+    def _bypass(code):
+        # Front Door's zone options refuse bypass; only Back Door clears.
+        back_door.logical_status = ZoneLogicalStatus.BYPASSED
+        handlers["ZB"](zone_number=998)
+
+    area.bypass.side_effect = _bypass
+
+    await coordinator.bypass_area(0, "4321")
+
+    assert "zone 1 (Front Door) logical_status now: 2" in caplog.text
+    assert "zone 2 (Back Door) logical_status now: 3" in caplog.text
+
+
 async def test_alarm_arm_custom_bypass_arms_away(hass):
     coordinator = _make_coordinator(hass)
     area = MagicMock()

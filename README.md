@@ -117,8 +117,11 @@ Entity-level, targeting specific entities:
   `alarm_arm_home`, `alarm_arm_night`, `alarm_arm_vacation`,
   `alarm_arm_custom_bypass`, `alarm_trigger`), plus this integration's
   `elkm1.alarm_bypass` / `elkm1.alarm_clear_bypass` (toggle bypass for all zones in an
-  area) and `elkm1.alarm_arm_home_instant` / `elkm1.alarm_arm_night_instant`
-  (Elk's no-entry-delay arm variants).
+  area), `elkm1.alarm_arm_home_instant` / `elkm1.alarm_arm_night_instant`
+  (Elk's no-entry-delay arm variants), and `elkm1.alarm_force_arm_away` /
+  `elkm1.alarm_force_arm_stay` (M1 5.3.0+; overrides a violated zone that allows it - a
+  zone with bypass disabled in its own zone options, e.g. a main entry/exit door by
+  design, is excluded from force-arm the same way it is excluded from a normal bypass).
 * `elkm1.sensor_zone_bypass` (requires a `code`) on a zone's own `binary_sensor` entity
   (most zones) or `sensor` entity (temperature/analog zones) - the only way to bypass or
   clear the bypass on an individual zone. There is deliberately no bypass switch: a
