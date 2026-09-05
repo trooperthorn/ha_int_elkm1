@@ -8,10 +8,17 @@ rules:
       is a configurable fallback poll rate (options flow) for panels with
       broadcast categories disabled in Global Programming.
   brands:
-    status: todo
+    status: done
     comment: |
-      Requires submitting a logo/icon to home-assistant/brands, an external
-      repo - not something this codebase can complete on its own.
+      custom_components/elkm1/brand/icon.png (256x256) and logo.png
+      (512x256) ship locally, served through the Brands Proxy API (HA
+      2026.3.0+) - verified 2026-09-05 against home-assistant/brands' own
+      README, which now calls its `custom_integrations/` submission folder
+      "Legacy": "Since HA 2026.3.0, custom components can include their
+      brand icons directly." Both images meet that repo's own size spec
+      (icon 256x256, logo's shortest side <=256px). No PR to the brands
+      repo is needed or preferred for a custom integration on a current
+      core version.
   common-modules: done
   config-flow-test-coverage:
     status: done
@@ -25,8 +32,11 @@ rules:
   dependency-transparency:
     status: done
     comment: |
-      elkm1-lib is public on PyPI, source at github.com/gwww/elkm1, pinned
-      to 2.2.15 in manifest.json.
+      The elkm1-lib PyPI dependency was removed 2026-09-05 (see
+      docs/decisions.md); the ELK-M1 protocol implementation
+      (helpers/elk/) is now owned directly by this repository. The only
+      remaining runtime dependency is serialx==1.9.0, pinned in
+      manifest.json.
   docs-actions:
     status: done
     comment: README's Services section lists every real domain-level and entity-level service, matching services.yaml.
@@ -89,12 +99,17 @@ rules:
     comment: Inherited from CoordinatorEntity, tracking coordinator.last_update_success.
   integration-owner: done
   log-when-unavailable:
-    status: todo
+    status: done
     comment: |
-      No verified log-once-then-suppress behavior for repeated connection
-      failures; needs a dedicated check rather than assuming the
-      reconnect/backoff logic in helpers/transport.py already covers this
-      rule's specific intent.
+      Verified against homeassistant/helpers/update_coordinator.py:
+      async_set_update_error (used by _handle_disconnected) already guards
+      its error log with `if self.last_update_success`, so a disconnect
+      logs once, not per retry. The matching "recovered" log is built into
+      DataUpdateCoordinator._async_refresh for the poll path, but this
+      integration is local_push primary and recovers through _on_login
+      calling async_set_updated_data directly, which core does not
+      instrument the same way - added an explicit one-time info log there,
+      guarded the same way, so both directions log exactly once.
   parallel-updates:
     status: done
     comment: |
@@ -110,14 +125,20 @@ rules:
       Serial connections (no username/password) abort as
       reauth_unsupported rather than showing an inapplicable form.
   test-coverage:
-    status: todo
+    status: done
     comment: |
-      The suite now includes the required configuration/identity matrix plus
-      migration, diagnostics redaction, entry-owned transport cancellation,
-      coordinator auth, setup/unload, and platform/service behavior. The
-      quality-scale >90% line-coverage threshold has not yet been established;
-      live hardware qualification is tracked separately in
-      docs/live_qualification.md.
+      Measured 2026-09-05: 99% overall line coverage across
+      custom_components/elkm1 (4038 statements, 11 missed; 969 tests),
+      raised from an earlier 82% baseline. Every platform/entity module
+      previously below threshold (device_action.py, util.py, discovery.py,
+      transport.py, climate.py, sensor.py, time.py, baud_probe.py,
+      coordinator.py, __init__.py, binary_sensor.py, alarm_control_panel.py,
+      config_flow.py) is now at 97-100%. The handful of remaining missed
+      lines (alarm_control_panel.py:94, services.py:74, one or two lines
+      each in discovery.py/baud_probe.py/message.py/transport.py) are
+      defensive branches not practically reachable through the public
+      surface exercised by tests. Live hardware qualification is tracked
+      separately in docs/live_qualification.md.
 
   # Gold
   devices:
@@ -135,10 +156,12 @@ rules:
   discovery:
     status: done
     comment: |
-      DHCP plus upstream elkm1_lib UDP broadcast/directed discovery cover
-      network XEP interfaces. Serial remains an explicit SerialPortSelector
-      path. Generic FTDI/PL2303/CP2102/CH340 matches were removed because they
-      identify bridge chips, not ELK products.
+      DHCP plus helpers/elk/discovery.py's UDP broadcast/directed discovery
+      (ported from the former elkm1-lib dependency, now owned directly - see
+      docs/decisions.md 2026-09-05) cover network XEP interfaces. Serial
+      remains an explicit SerialPortSelector path. Generic FTDI/PL2303/
+      CP2102/CH340 matches were removed because they identify bridge chips,
+      not ELK products.
   docs-data-update:
     status: done
     comment: README's Architecture section explains the push-first/poll-fallback data flow.
@@ -182,27 +205,51 @@ rules:
     status: done
     comment: ElkTroubleBinarySensor (one per trouble condition) is disabled by default; enabling all 23 on every install by default would be noisy.
   entity-translations:
-    status: todo
-    comment: strings.json has no top-level "entity" section yet for translating generic entity-type names.
-  exception-translations:
-    status: todo
-    comment: Exceptions raised throughout (HomeAssistantError, ConfigEntryAuthFailed, etc.) use plain f-string messages, not translation_domain/translation_key.
-  icon-translations:
-    status: todo
+    status: done
     comment: |
-      A few entities set _attr_icon directly (mdi:shield-sync,
-      mdi:shield-off, mdi:counter, mdi:shield-alert-outline) instead of
-      going through icons.json, which doesn't exist yet.
+      strings.json's new "entity" section covers every entity with a fixed,
+      generic English name: the panel sensor, active-zones summary, per-area
+      alarm partitions and area-openings sensors (both translated with an
+      area_num placeholder set once at __init__), the arm-request proxy
+      switch, and all 23 named trouble binary sensors (translation_key ==
+      the existing helpers/troublestatus.py machine name). ElkZoneBypassSwitch
+      and ElkThermostatEMHeat keep a live name property override instead,
+      because their name embeds a panel-reported zone/thermostat name that
+      can arrive after entity creation, and Entity.translation_placeholders
+      is a @final cached_property (computed once, then frozen) - see
+      docs/decisions.md 2026-09-05. Every other entity's name is itself
+      panel-supplied data (a zone/output/thermostat/counter/light/task name),
+      not generic UI text, so it correctly has no translation_key.
+  exception-translations:
+    status: done
+    comment: |
+      Every HomeAssistantError/ConfigEntryAuthFailed/ConfigEntryNotReady
+      raised in coordinator.py, __init__.py, alarm_control_panel.py,
+      switch.py, number.py, and services.py now passes
+      translation_domain=DOMAIN and a translation_key, with
+      translation_placeholders for the ones that embed a value; the English
+      text lives in strings.json's new "exceptions" section (14 keys).
+  icon-translations:
+    status: done
+    comment: |
+      icons.json covers the three entities with a static, translation_key-
+      backed icon (number.counter, sensor.active_zones,
+      switch.arm_system_request). ElkZoneBypassSwitch keeps a literal
+      _attr_icon (mdi:shield-off) since icon-translations keys by
+      translation_key, which that entity intentionally does not set - see
+      docs/decisions.md 2026-09-05.
   reconfiguration-flow:
     status: done
     comment: async_step_reconfigure (network) and async_step_reconfigure_serial, both via async_update_and_abort.
   repair-issues:
-    status: todo
+    status: done
     comment: |
-      helpers/panel_settings.py's verify_panel_configuration() only logs a
-      warning when a required Global Programming broadcast setting can't
-      be confirmed; it doesn't raise a Repair issue the user would
-      actually see in Settings > Repairs.
+      helpers/panel_settings.py's verify_panel_configuration() now raises a
+      Repair issue (ir.async_create_issue, outdated_panel_broadcasts_<entry_id>)
+      when a required Global Programming broadcast setting can't be
+      confirmed - actionable (enable it on the panel) and user-visible in
+      Settings > Repairs, not just the log. Deleted via ir.async_delete_issue
+      once every category is confirmed.
   stale-devices:
     status: exempt
     comment: Single static panel device; there's no per-device removal case to handle.
@@ -211,10 +258,12 @@ rules:
   async-dependency:
     status: done
     comment: |
-      elkm1_lib's message encode/decode and Elk/subsystem orchestration
-      are used as-is. Each entry binds a native asyncio transport supervisor
-      to its own Connection instance; no process-global class monkeypatch is
-      performed, and unload awaits all owned stream/reconnect cleanup.
+      helpers/elk's message encode/decode and Elk/subsystem orchestration are
+      owned directly by this repository (elkm1-lib removed 2026-09-05, see
+      docs/decisions.md). Each entry binds a native asyncio transport
+      supervisor to its own Connection instance; no process-global class
+      monkeypatch is performed, and unload awaits all owned stream/reconnect
+      cleanup.
   inject-websession:
     status: exempt
     comment: No HTTP requests - this integration only speaks the Elk-M1 ASCII protocol over serial/TCP.
@@ -223,5 +272,5 @@ rules:
     comment: |
       CI runs strict mypy against the whole integration with zero errors.
       Targeted attr-defined suppressions document the small set of
-      subclass-only ELK fields that elkm1_lib exposes as Element in its stubs;
-      strict checks remain enabled globally.
+      subclass-only ELK fields that helpers/elk's own collection classes
+      expose as Element; strict checks remain enabled globally.
