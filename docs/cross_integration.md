@@ -16,6 +16,12 @@ simply lives alongside it in Home Assistant:
 
 ## Alarmo (code-level)
 
+Two independent, non-overlapping patterns are supported. Pick one per area;
+Alarmo's own arm/disarm decisions and a state mirror pushing a different
+history at the same entity are not reconciled against each other.
+
+### Pattern 1: Alarmo as its own alarm brain (zone sensors only)
+
 `alarmo_integration.py` registers `elkm1.alarmo_auto_setup`, a service that
 scans the entity registry for this integration's zone `binary_sensor`
 entities and posts a persistent notification listing them, so you can add
@@ -28,6 +34,36 @@ is only to make its zones easy to find, not to duplicate Alarmo's arming
 logic. Zone `device_class` is derived from the panel's zone-definition field
 best-effort - see the comment above `_DEVICE_CLASS_MAP` in `binary_sensor.py`
 for what the protocol does and doesn't tell us about physical sensor type.
+In this pattern Alarmo is the source of truth for arm state; it never asks
+the physical ELK panel what it thinks its own state is.
+
+### Pattern 2: mirror the physical panel's state into Alarmo
+
+`blueprints/automation/alarmo_state_sync.yaml` keeps Alarmo in step with the
+ELK panel instead: it triggers on this integration's `alarm_control_panel`
+entity changing to any stable state (`disarmed`, the five armed variants, or
+`triggered`) and immediately calls the matching Alarmo service
+(`alarmo.arm`/`alarmo.disarm`, or the standard `alarm_control_panel.alarm_trigger`
+for `triggered`, since Alarmo has no dedicated external-trigger service).
+There is no artificial delay in the automation itself; propagation time is
+whatever the panel's own push (`AS`/`EE` broadcast to coordinator to entity
+state) and Home Assistant's event bus take. The blueprint's own header
+documents why it sends `skip_delay: true` and `force: true` on the Alarmo
+side - ELK-M1's exit/entry delay has already run in hardware by the time the
+panel reports a stable armed state, and the panel's own decision to arm
+should not be second-guessed by Alarmo's independent sensor view once it is
+being used purely as a mirror. This direction is one-way (ELK-M1 -> Alarmo);
+it does not let Alarmo command the physical panel.
+
+Whichever pattern is used, `alarm_control_panel.py`'s `changed_by` property
+and its `last_user`/`last_user_name`/`last_keypad`/`last_user_time` state
+attributes are sourced from the panel's own `IC` (user code) report -
+`elk.users.username()`, which the library already syncs from the panel's
+programmed user names via `sd`/`TextDescriptions.USER` - so an automation or
+dashboard reacting to an Elk-M1 arm/disarm event can show who did it, not
+just that it happened. `last_user_name` falls back to `User <n>` if that
+user number has no name programmed on the panel, and to `Unknown` before any
+`IC` message has been seen this session.
 
 ## Better Thermostat (code-level)
 

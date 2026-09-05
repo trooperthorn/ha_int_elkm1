@@ -1,0 +1,111 @@
+blueprint:
+  name: "ELK-M1: Mirror Arming/Disarming/Alarm State to Alarmo"
+  description: |
+    Mirrors this integration's ELK-M1 alarm_control_panel entity into Alarmo the
+    moment the panel reports a new stable state, so Alarmo always shows what the
+    physical panel is actually doing.
+
+    Direction is one-way: ELK-M1 -> Alarmo. This blueprint does not let Alarmo
+    arm or disarm the physical panel; it only keeps Alarmo's own state in sync
+    with a panel that is armed/disarmed by keypad, ELK-M1's own alarm_control_panel
+    entity, or any other means. There is no artificial delay in this automation -
+    it fires on the state-change event itself, and ELK-M1's coordinator pushes
+    that state the instant the panel's AS/EE broadcast (or an alarm-state change)
+    arrives, so end-to-end latency is whatever the serial/TCP link and Home
+    Assistant's event bus take, typically well under a second.
+
+    Only the seven *stable* states are mirrored (disarmed, the five armed
+    variants, and triggered). Transient states (arming/pending/disarming) are not
+    forwarded: ELK-M1's own exit/entry delay has already run on the physical
+    panel by the time it reports a stable armed state, so the Alarmo-side arm
+    call is sent with `skip_delay: true` to avoid making Alarmo run a second,
+    redundant delay on top of one the hardware panel already completed. It is
+    also sent with `force: true`, because the physical panel has already decided
+    to arm - Alarmo second-guessing that decision based on its own sensor view
+    would desync the mirror from reality, which is worse for a security system
+    than an occasional forced arm.
+
+    Triggered/alarm state uses the standard `alarm_control_panel.alarm_trigger`
+    service (Alarmo's own entity always supports the TRIGGER feature), not an
+    Alarmo-specific service - Alarmo has no dedicated "set triggered from
+    outside" service.
+
+    Do not also let Alarmo arm/disarm independently from its own sensor logic
+    while running this blueprint unless you intend Alarmo's decisions to be
+    overwritten by the next ELK-M1 state push - the two are not reconciled
+    against each other. See docs/cross_integration.md's Alarmo section for the
+    two supported patterns (Alarmo as an independent alarm brain over ELK-M1's
+    zone sensors, or this blueprint's state mirror) and why they should not
+    normally be combined for the same area.
+  domain: automation
+  source_url: https://github.com/trooperthorn/ha_int_elkm1/blob/main/blueprints/automation/alarmo_state_sync.yaml
+
+  input:
+    elk_alarm_panel:
+      name: ELK-M1 Alarm Panel
+      description: The ELK-M1 area's alarm_control_panel entity to mirror from.
+      selector:
+        entity:
+          domain: alarm_control_panel
+          integration: elkm1
+
+    alarmo_entity:
+      name: Alarmo Entity
+      description: The Alarmo alarm_control_panel entity to mirror into (an area entity, or the master entity for a single-area setup).
+      selector:
+        entity:
+          domain: alarm_control_panel
+          integration: alarmo
+
+    alarmo_code:
+      name: Alarmo Code
+      description: Code to pass with each Alarmo service call, if Alarmo is configured to require one for arm/disarm. Leave blank if Alarmo has no code requirement or a default code configured.
+      default: ""
+      selector:
+        text: {}
+
+trigger:
+  - platform: state
+    entity_id: !input elk_alarm_panel
+    to:
+      - "disarmed"
+      - "armed_away"
+      - "armed_home"
+      - "armed_night"
+      - "armed_vacation"
+      - "armed_custom_bypass"
+      - "triggered"
+
+variables:
+  alarmo_target: !input alarmo_entity
+  alarmo_code_input: !input alarmo_code
+  new_state: "{{ trigger.to_state.state }}"
+
+condition:
+  - condition: template
+    value_template: "{{ trigger.to_state.state != trigger.from_state.state }}"
+
+action:
+  - choose:
+      - conditions: "{{ new_state == 'disarmed' }}"
+        sequence:
+          - action: alarmo.disarm
+            data:
+              entity_id: "{{ alarmo_target }}"
+              code: "{{ alarmo_code_input if alarmo_code_input else None }}"
+      - conditions: "{{ new_state == 'triggered' }}"
+        sequence:
+          - action: alarm_control_panel.alarm_trigger
+            target:
+              entity_id: "{{ alarmo_target }}"
+      - conditions: "{{ new_state in ['armed_away', 'armed_home', 'armed_night', 'armed_vacation', 'armed_custom_bypass'] }}"
+        sequence:
+          - action: alarmo.arm
+            data:
+              entity_id: "{{ alarmo_target }}"
+              mode: >-
+                {{ {"armed_away": "away", "armed_home": "home", "armed_night": "night",
+                    "armed_vacation": "vacation", "armed_custom_bypass": "custom"}[new_state] }}
+              skip_delay: true
+              force: true
+              code: "{{ alarmo_code_input if alarmo_code_input else None }}"

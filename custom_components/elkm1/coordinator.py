@@ -23,6 +23,8 @@ from .const import (
     ATTR_KEY_NAME,
     ATTR_KEYPAD_ID,
     ATTR_KEYPAD_NAME,
+    ATTR_USER_NUMBER,
+    ATTR_VALID,
     CONF_BAUD_RATE,
     CONF_CONNECTION_TYPE,
     CONF_HOST,
@@ -35,6 +37,7 @@ from .const import (
     CONNECTION_SERIAL,
     COORDINATOR_UPDATE_INTERVAL,
     EVENT_ELKM1_KEYPAD_KEY_PRESSED,
+    EVENT_ELKM1_USER_CODE_ENTERED,
 )
 from .helpers.transport import DEFAULT_HEARTBEAT_TIMEOUT, HEARTBEAT_MARGIN, ElkConnectionManager
 from .helpers.troublestatus import (
@@ -87,6 +90,10 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         self._url = self._build_connection_url()
         self._raw_trouble_status = ""
         self._keypad_status: dict[int, dict[str, Any]] = {}
+        # Populated from IC (Send Valid/Invalid User Code); None until the panel sends one.
+        self._last_user: int | None = None
+        self._last_keypad: int | None = None
+        self._last_user_time: datetime | None = None
         self.last_command_timeout: str | None = None
         # Broadcast counts per message type; panel_settings.py infers the Xmit Changes bits from them.
         self._broadcast_counts: dict[str, int] = dict.fromkeys(
@@ -189,6 +196,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         self._connection_manager = manager
 
         elk.add_handler("EE", self._handle_timer_event)
+        elk.add_handler("IC", self._handle_user_code)
         elk.add_handler("AM", self._handle_alarm_memory)
         elk.add_handler("SS", self._handle_trouble_status)
         elk.add_handler("ZD", self._handle_zone_definitions)
@@ -295,6 +303,28 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             EVENT_ELKM1_KEYPAD_KEY_PRESSED,
             event_data,
         )
+
+    def _handle_user_code(self, code: str, user: int, keypad: int) -> None:
+        """Track the panel's IC (user code) report for the alarm entity's changed_by.
+
+        `user` is 0-indexed and negative when the panel reports an invalid code
+        (elkm1_lib's own decode comment); a negative value clears attribution
+        rather than attaching an event to the wrong user. Fires promptly so
+        automations (Alarmo sync included) see who armed/disarmed with no poll delay.
+        """
+        valid = user >= 0
+        self._last_user = user if valid else None
+        self._last_keypad = keypad
+        self._last_user_time = datetime.now(UTC)
+        self.hass.bus.async_fire(
+            EVENT_ELKM1_USER_CODE_ENTERED,
+            {
+                ATTR_KEYPAD_ID: keypad + 1,
+                ATTR_USER_NUMBER: (user + 1) if valid else None,
+                ATTR_VALID: valid,
+            },
+        )
+        self.async_set_updated_data(self._build_normalized_data())
 
     def _handle_keypad_detail(
         self,
@@ -477,6 +507,13 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         trouble_details = parse_trouble_details(self._raw_trouble_status)
         trouble_known = bool(self._raw_trouble_status)
 
+        last_user_name = "Unknown"
+        if self._last_user is not None:
+            # elk.users syncs via "sd" (TextDescriptions.USER) on every connect/resync;
+            # username() returns "" if that name was never programmed on the panel.
+            resolved = self._elk.users.username(self._last_user) if self._elk else ""
+            last_user_name = resolved or f"User {self._last_user + 1}"
+
         return ElkPanelData(
             panel_version=getattr(panel, "elkm1_version", None),
             num_areas=num_areas,
@@ -492,9 +529,12 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             keypads=keypads,
             armed=is_any_armed,
             armed_mode="armed" if is_any_armed else "disarmed",
-            last_user=None,
-            last_user_name="Unknown",
-            last_keypad=None,
+            last_user=self._last_user,
+            last_user_name=last_user_name,
+            last_keypad=self._last_keypad,
+            last_user_time=(
+                self._last_user_time.isoformat() if self._last_user_time else None
+            ),
             zones_faulted=faulted_indices,
             faulted_zone_names=faulted_names,
             outputs_active=active_outputs,

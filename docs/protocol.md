@@ -58,6 +58,12 @@ keeps since connecting:
 All six rows are verified in code. The original docstring also named location 30; that
 location is not in `REQUIRED_SETTINGS` and is unverified.
 
+G40 governs the *only* path this integration has to keypad function-key/bypass-code status:
+`elkm1_lib` 2.2.15 has no encoder for the `kc` request ("Request Keypad Status Update"), so
+the integration never asks the panel for this state - it can only receive an unsolicited
+`KC` broadcast, and only while G40 is enabled. If G40 is off, keypad key-illumination and
+bypass-code status are simply unavailable, not stale.
+
 ## Firmware floor
 
 The minimum supported firmware is 4.6.8 on the 4.x branch, or 5.2.0 on 5.x and later. A
@@ -92,6 +98,16 @@ arm-up state 3 is the exit timer. Arm-up state 6 with a non-zero armed status ma
 security summary, the AS arm-up state is authoritative: 1 is ready and 2 can be force
 armed. Zones are 1-indexed to the user and 0-indexed in the lists. `alarm_state` keeps its
 single-character wire value because valid values run from `':'` to `'B'`.
+
+The `AS` reply's trailing `00` field is M1 4.11+ only: per area, it carries the exit-time
+remaining (in seconds, 2 hex digits) when that area's arm-up state is `3`, or the
+entrance-time remaining when its alarm state is `1`. `elkm1_lib.message.as_decode` only
+reads `msg[4:28]` (armed status, arm-up state, alarm state) and never parses this trailing
+field, so it is silently dropped from the `AS` path. This is not a functional gap: the
+separate `EE` (Entry/Exit Time Data) message carries the same countdown as `timer1`/`timer2`
+and is what `coordinator.py` actually surfaces (`_handle_timer_event`) - but a reader
+verifying `AS` decode coverage against the manual should know this sub-field exists in the
+spec and is unused here, not missing by omission.
 
 ## Zone definitions and statuses
 

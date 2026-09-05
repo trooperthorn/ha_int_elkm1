@@ -62,15 +62,15 @@ ELK_ELEMENTS = {
 }
 
 EVENT_ELKM1_KEYPAD_KEY_PRESSED = "elkm1.keypad_key_pressed"
+EVENT_ELKM1_USER_CODE_ENTERED = "elkm1.user_code_entered"
 
 ATTR_DURATION = "duration"
 ATTR_KEYPAD_ID = "keypad_id"
 ATTR_KEY = "key"
 ATTR_KEY_NAME = "key_name"
 ATTR_KEYPAD_NAME = "keypad_name"
-ATTR_CHANGED_BY_KEYPAD = "changed_by_keypad"
-ATTR_CHANGED_BY_ID = "changed_by_id"
-ATTR_CHANGED_BY_TIME = "changed_by_time"
+ATTR_USER_NUMBER = "user_number"
+ATTR_VALID = "valid"
 ATTR_VALUE = "value"
 
 ELK_USER_CODE_SERVICE_SCHEMA: dict[Any, Any] = {

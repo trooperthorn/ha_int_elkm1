@@ -132,6 +132,19 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
         return STATE_DISARMED
 
     @property
+    def changed_by(self) -> str | None:
+        """Return who last armed/disarmed, from the panel's IC (user code) report.
+
+        None until the panel sends an IC message for this session; HA's alarm
+        card and any automation reading the standard `changed_by` attribute
+        (Alarmo included) get real attribution rather than a placeholder.
+        """
+        if not self.coordinator.data:
+            return None
+        name = self.coordinator.data.last_user_name
+        return name if name != "Unknown" else None
+
+    @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra state attributes with detailed panel information."""
         if not self.coordinator.data:
@@ -150,6 +163,7 @@ class ElkAlarmControlPanel(ElkEntity, AlarmControlPanelEntity):
             "last_user": global_data.last_user,
             "last_user_name": global_data.last_user_name,
             "last_keypad": global_data.last_keypad,
+            "last_user_time": global_data.last_user_time,
             "zones_faulted": global_data.zones_faulted,
             "zones_faulted_count": len(global_data.zones_faulted),
             "faulted_zone_names": global_data.faulted_zone_names,

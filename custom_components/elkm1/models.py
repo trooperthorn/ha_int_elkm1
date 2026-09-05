@@ -67,6 +67,7 @@ class ElkPanelData:
     last_user: int | None = None
     last_user_name: str = "Unknown"
     last_keypad: int | None = None
+    last_user_time: str | None = None
     zones_faulted: list[int] = field(default_factory=list)
     faulted_zone_names: list[str] = field(default_factory=list)
     outputs_active: list[int] = field(default_factory=list)
