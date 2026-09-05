@@ -47,7 +47,10 @@ async def async_setup_entry(
     runtime_data: ElkRuntimeData = config_entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    num_areas = coordinator.data.num_areas if coordinator.data else 1
+    # Real configured area indices, not range(num_areas): num_areas is only a
+    # count, and configured areas are not always contiguous from 0 (a panel
+    # can have Area 2 unprogrammed while Area 8 is real). See docs/decisions.md.
+    area_indices = sorted(coordinator.data.areas) if coordinator.data else [0]
 
     entities = [
         ElkAlarmControlPanel(
@@ -55,7 +58,7 @@ async def async_setup_entry(
             config_entry=config_entry,
             area_index=i,
         )
-        for i in range(num_areas)
+        for i in area_indices
     ]
 
     async_add_entities(entities)

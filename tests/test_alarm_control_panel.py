@@ -144,6 +144,40 @@ def test_changed_by_none_when_last_user_name_is_unknown():
     assert panel.changed_by is None
 
 
+async def test_setup_entry_uses_real_area_indices_not_a_contiguous_range(
+    hass, mock_network_entry
+):
+    """A panel can have a gap (e.g. Area 2 never programmed) while a later
+    area (e.g. Area 8) is real. range(num_areas) would create an entity for
+    the unconfigured gap and skip the real later area entirely - see
+    docs/decisions.md 2026-09-05."""
+    from custom_components.elkm1.alarm_control_panel import async_setup_entry
+    from custom_components.elkm1.models import ElkRuntimeData
+
+    coordinator = MagicMock()
+    coordinator.data = ElkPanelData(
+        num_areas=3, areas={0: AreaData(), 2: AreaData(), 7: AreaData()}
+    )
+
+    mock_network_entry.add_to_hass(hass)
+    mock_network_entry.runtime_data = ElkRuntimeData(
+        prefix="",
+        mac=mock_network_entry.unique_id,
+        auto_configure=True,
+        config={},
+        coordinator=coordinator,
+    )
+
+    added: list = []
+
+    def _async_add_entities(new_entities):
+        added.extend(new_entities)
+
+    await async_setup_entry(hass, mock_network_entry, _async_add_entities)
+
+    assert {p._area_index for p in added} == {0, 2, 7}
+
+
 def test_changed_by_returns_the_resolved_user_name():
     panel = _panel(AreaData())
     panel.coordinator.data.last_user_name = "Sean"

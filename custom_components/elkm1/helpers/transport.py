@@ -60,6 +60,17 @@ async def _entry_read_stream(connection: Connection, reader: asyncio.StreamReade
                 decoded = decode(line)
             except (ValueError, AttributeError) as err:
                 _LOGGER.error("Invalid ELK-M1 message '%s': %s", line, err)
+                if "Bad checksum" in str(err):
+                    # Temporary diagnostic for the 2026-09 RR-checksum
+                    # investigation (docs/decisions.md): dump every frame
+                    # extracted from this same read() so a mis-split
+                    # between adjacent frames would be visible, not just
+                    # the one that failed. Remove once that's resolved.
+                    _LOGGER.error(
+                        "Bad-checksum diagnostic: %d frame(s) this read, hex=%s",
+                        len(frames),
+                        [f.encode("ISO-8859-1").hex() for f in frames],
+                    )
                 continue
 
             if decoded is None:

@@ -84,11 +84,13 @@ async def async_setup_entry(
         for _index, (name, _label) in TROUBLE_INDEX_NAMES.items()
     )
 
-    # One aggregate opening sensor per area; see docs/cross_integration.md.
-    num_areas = coordinator.data.num_areas if coordinator.data else 1
+    # One aggregate opening sensor per area, keyed by each area's real,
+    # possibly non-contiguous index - not range(num_areas), which assumes
+    # configured areas start at 0 with no gaps. See docs/decisions.md.
+    area_indices = sorted(coordinator.data.areas) if coordinator.data else [0]
     entities.extend(
         ElkAreaOpeningsBinarySensor(coordinator, config_entry, area_index)
-        for area_index in range(num_areas)
+        for area_index in area_indices
     )
 
     async_add_entities(entities)

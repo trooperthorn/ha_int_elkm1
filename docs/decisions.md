@@ -372,3 +372,44 @@ Rejected: creating them enabled, which adds 144 generically named entities to ev
 ## Recorded, unnamed counters and custom values are not created
 
 Rejected: creating all 64 counter and 20 custom-value slots on every install.
+
+## 2026-09-05, area entities are keyed by real area index, not `range(num_areas)`
+
+Live testing on Sean's panel (only Area 1 configured with real zones) surfaced a bug: a
+panel can leave a middle area unprogrammed while a later one is real (this panel has no
+Area 2, but does have Areas 1 and 3-8). `coordinator.py`'s `_build_normalized_data` already
+keys `ElkPanelData.areas` by each area's real `.index`, but `alarm_control_panel.py` and
+`binary_sensor.py`'s `async_setup_entry` created entities with `range(num_areas)`, which
+assumes the configured areas are exactly indices `0` through `num_areas - 1` with no gaps.
+Both now iterate `sorted(coordinator.data.areas)` instead. Rejected: leaving it as
+`range(num_areas)`, which would silently create an entity for an unconfigured gap (with no
+real state behind it) while never creating one for a real area past the gap - not just
+mislabeled, but a missing entity for a real, physically-armable area.
+
+This same investigation also closed out an apparent arm/disarm confirmation bug: arming
+Area 2 and Area 8 both timed out waiting for an `AS` reply in live testing, which looked
+like a `COMMAND_RESPONSE_TIMEOUT`/exit-delay problem. Sean confirmed neither area has any
+zone assigned to it - not a code bug, just testing areas that don't functionally exist.
+`_execute_arm_cmd`, `al_encode`, and `as_decode` were all re-verified correct for any valid
+area index during this investigation and needed no change.
+
+## 2026-09-05, arm-with-bypass added to unblock live arm/disarm testing under bench conditions
+
+Sean's bench setup has every zone in the only real area (Area 1) intentionally disconnected
+for testing, which the arm/disarm live-verification step correctly refused to arm through
+(arming with a violated zone risks an immediate real alarm). `scripts/live_full_verification.py`
+now offers to bypass the violated zones first (`bypass_area`, the same `zb999` mechanism the
+alarm panel's own bypass service already used), arm-away, then disarm and clear the bypass to
+restore state - letting the arm/disarm round trip be exercised on the one area that matters
+without needing to reconnect any physical wiring.
+
+`coordinator.py` also gained `async_alarm_force_arm_away`/`async_alarm_force_arm_stay` (the
+protocol's `a9`/`a:` force-arm commands, valid on M1 firmware 5.3.0+; Sean's panel is 5.3.18).
+Force-arm needed its own confirmation mapping (`_FORCE_ARM_CONFIRMS_AS`): `a9`/`a:` are
+send-only command codes with no matching value in the `AS` reply's armed-status field, so the
+existing generic `expected = level.value` comparison would never match and would always time
+out even on a successful force-arm. Confirmation now waits for the resulting plain
+`ARMED_AWAY`/`ARMED_STAY` status instead. Rejected: exposing force-arm as a set-up path in
+`_step_arm_disarm` in place of bypass-then-arm, since bypass reuses an already-tested,
+already-HA-exposed mechanism and is closer to how an installer would actually override a
+violated zone from a keypad.

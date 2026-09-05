@@ -1129,6 +1129,60 @@ async def test_execute_arm_cmd_is_a_noop_when_already_at_the_target_level(hass):
     area.disarm.assert_not_called()
 
 
+async def test_force_arm_away_confirms_against_armed_away_not_the_command_byte(hass):
+    """a9 (force arm away) is a send-only command code with no matching AS
+    armed-status value; confirmation must wait for the plain ARMED_AWAY status
+    the panel actually reports, not for '9' to reappear. See docs/decisions.md
+    2026-09-05 (the arm/disarm timeout investigation, once Sean confirmed
+    Areas 2-8 have no real zones and only Area 1's violated bench zones were
+    blocking a normal arm)."""
+    coordinator = _make_coordinator(hass)
+    area = MagicMock()
+    area.armed_status = ArmedStatus.DISARMED
+    elk = MagicMock()
+    elk.is_connected.return_value = True
+    elk.is_paused.return_value = False
+    elk.areas = [area]
+    handlers: dict[str, object] = {}
+    elk.add_handler.side_effect = lambda command, handler: handlers.update({command: handler})
+    elk.remove_handler.side_effect = lambda command, _handler: handlers.pop(command, None)
+    coordinator._elk = elk
+
+    def _arm(level, code):
+        handlers["AS"](armed_statuses=[ArmedStatus.ARMED_AWAY])
+
+    area.arm.side_effect = _arm
+
+    result = await coordinator.async_alarm_force_arm_away(0, 4321)
+
+    assert result is True
+    area.arm.assert_called_once_with(ArmLevel.FORCE_ARM_TO_AWAY_MODE, 4321)
+
+
+async def test_force_arm_stay_confirms_against_armed_stay(hass):
+    coordinator = _make_coordinator(hass)
+    area = MagicMock()
+    area.armed_status = ArmedStatus.DISARMED
+    elk = MagicMock()
+    elk.is_connected.return_value = True
+    elk.is_paused.return_value = False
+    elk.areas = [area]
+    handlers: dict[str, object] = {}
+    elk.add_handler.side_effect = lambda command, handler: handlers.update({command: handler})
+    elk.remove_handler.side_effect = lambda command, _handler: handlers.pop(command, None)
+    coordinator._elk = elk
+
+    def _arm(level, code):
+        handlers["AS"](armed_statuses=[ArmedStatus.ARMED_STAY])
+
+    area.arm.side_effect = _arm
+
+    result = await coordinator.async_alarm_force_arm_stay(0, 4321)
+
+    assert result is True
+    area.arm.assert_called_once_with(ArmLevel.FORCE_ARM_TO_STAY_MODE, 4321)
+
+
 async def test_alarm_arm_custom_bypass_arms_away(hass):
     coordinator = _make_coordinator(hass)
     area = MagicMock()

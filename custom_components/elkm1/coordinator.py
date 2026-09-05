@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
@@ -40,7 +40,7 @@ from .const import (
 )
 from .event_log import describe_elk_event
 from .helpers.elk import Elk
-from .helpers.elk.const import ArmLevel
+from .helpers.elk.const import ArmedStatus, ArmLevel
 from .helpers.elk.message import as_encode, az_encode, cs_encode, lw_encode, ss_encode
 from .helpers.transport import DEFAULT_HEARTBEAT_TIMEOUT, HEARTBEAT_MARGIN, ElkConnectionManager
 from .helpers.troublestatus import (
@@ -730,11 +730,28 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         """Send arm-away command for specific area (custom bypass = arm-away)."""
         return await self._execute_arm_cmd(ArmLevel.ARMED_AWAY, area_index, code)
 
+    async def async_alarm_force_arm_away(self, area_index: int, code: int = 0) -> bool:
+        """Force arm-away, overriding a violated zone (a9, M1 5.3.0+)."""
+        return await self._execute_arm_cmd(ArmLevel.FORCE_ARM_TO_AWAY_MODE, area_index, code)
+
+    async def async_alarm_force_arm_stay(self, area_index: int, code: int = 0) -> bool:
+        """Force arm-stay, overriding a violated zone (a:, M1 5.3.0+)."""
+        return await self._execute_arm_cmd(ArmLevel.FORCE_ARM_TO_STAY_MODE, area_index, code)
+
     async def async_alarm_trigger(self, area_index: int, code: int = 0) -> bool:
         """Reject panic control, which the third-party protocol does not provide."""
         raise HomeAssistantError(
             translation_domain=DOMAIN, translation_key="panic_not_supported"
         )
+
+    # a9/a: (force arm) are send-only command codes with no matching entry in
+    # the AS reply's armed-status field; the panel reports a plain arm result
+    # instead (see docs/protocol.md). Confirmation must wait for that, not for
+    # the command byte itself to reappear.
+    _FORCE_ARM_CONFIRMS_AS: ClassVar[dict[ArmLevel, str]] = {
+        ArmLevel.FORCE_ARM_TO_AWAY_MODE: ArmedStatus.ARMED_AWAY.value,
+        ArmLevel.FORCE_ARM_TO_STAY_MODE: ArmedStatus.ARMED_STAY.value,
+    }
 
     async def _execute_arm_cmd(self, level: ArmLevel, area_index: int, code: int = 0) -> bool:
         """Arm/disarm an area using helpers/elk's own checksummed Area helpers."""
@@ -744,7 +761,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             )
         active_pin = code if code > 0 else int(self._pin or 0)
         area = cast(Any, self._elk.areas[area_index])
-        expected = level.value
+        expected = self._FORCE_ARM_CONFIRMS_AS.get(level, level.value)
 
         if protocol_value(area.armed_status) == expected:
             return True
