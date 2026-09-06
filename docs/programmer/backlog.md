@@ -31,6 +31,9 @@ Dated open items.
   characters is unverified.
 - 2026-09-06, keypad flag byte 3 maps enum names A to F onto F1 to F6 by
   assumption; verify against the form's control bindings.
+- 2026-09-06, the integration should raise a Repair issue when its entry is disabled
+  with no programming claim active, and the claim services should note that on serial
+  the entry is disabled rather than paused.
 - 2026-09-06, the integration side of the session claim: `elkm1.programming_session_start`
   and `_end` services, the `remote_programming` binary sensor, the two events, and the
   Repair issues, as specified in `app.md`; then the app's calls to them through the core

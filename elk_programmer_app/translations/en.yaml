@@ -1,10 +1,22 @@
 configuration:
+  connection:
+    name: Connection
+    description: serial for the panel's RS-232 port on this host; network for an M1XEP.
+  serial_port:
+    name: Serial port
+    description: The serial device the panel is connected to. Prefer the by-id path so it survives re-enumeration.
+  baud:
+    name: Baud
+    description: The panel's Port 0 rate (Global option G34); 115200 is the factory default.
   host:
     name: Panel address
-    description: The M1XEP address reachable from this host.
+    description: Only for a network connection; the M1XEP address reachable from this host.
   port:
     name: Panel port
-    description: The XEP port for the programming session; 2101 is the non-secure port.
+    description: Only for a network connection; 2101 is the XEP's non-secure port.
+  release_integration:
+    name: Release the integration during a session
+    description: Disable the elkm1 integration's entries while a programming session is open so the serial port is free, and re-enable them afterwards. Required for serial.
   allowed_users:
     name: Allowed Home Assistant user ids
     description: Only these user ids may open the app. Everyone else is refused, including admins.

@@ -100,22 +100,54 @@ true`, the one API grant the app takes. It uses that grant for nothing else;
 in particular it does not disable the config entry, because the pause the
 panel itself imposes is sufficient and keeps the alarm entities present.
 
+## Serial: the port is exclusive
+
+The panel is reached over RS-232 from the Home Assistant host; the M1XEP is
+gone. That changes the coexistence story: a serial port can be opened by one
+process, so while the integration holds it the app cannot open it, and the
+panel's "remote programming connected" status never reaches the integration
+because it is not listening. The explicit hand-off is therefore mandatory
+for serial:
+
+1. Before opening the port the app lists the `elkm1` config entries through
+   the core REST proxy, writes their ids to `session_open.json` under `/data`,
+   and disables each through the WebSocket `config_entries/disable` command
+   (core exposes disabling only there). Disabling closes the port.
+2. After the session ends, on an explicit disconnect, on a failed login, and
+   on the idle stop, the app re-enables the entries and removes the marker.
+   Re-enabling runs the integration's normal setup and full sync, so
+   whatever was programmed is read back.
+3. If the app dies in between, the marker survives and the next start
+   restores the entries first and audits `integration_restored_after_restart`.
+   The integration side of the tracking design should raise a Repair issue
+   when its entry is disabled without an active claim.
+
+During a session the alarm entities are absent rather than unavailable and
+automation commands fail. That is the window ElkRP imposed, made visible.
+The `release_integration` option controls this and must stay on for serial.
+
+The container sees the host's serial devices through `uart: true`, the
+`serial_port` option (schema `device(subsystem=tty)`, by-id path preferred)
+selects one, and the AppArmor profile allows `/dev/ttyUSB*`, `/dev/ttyACM*`,
+and `/dev/serial/**`. The service does not sweep baud rates; the `baud`
+option must match the panel's Port 0 rate (G34, factory 115200).
+
 ## What the app needs from the Supervisor
 
 `config.yaml`: `boot: manual`, `startup: application`, `ingress: true` on
 port 8099, `panel_admin: true`, `homeassistant_api: true`, `init: false`,
-a custom `apparmor.txt`, `map: []`, no `ports`, no `host_network`, no
-`devices` or `uart` (the panel is reached over the network). Options: `host`,
-`port`, `allowed_users` (list of HA user ids), `idle_minutes`, `read_only`.
+a custom `apparmor.txt`, `map: []`, `uart: true`, no `ports`, no
+`host_network`. Options: `connection`, `serial_port`, `baud`, `host`, `port`,
+`release_integration`, `allowed_users` (list of HA user ids),
+`idle_minutes`, `read_only`.
 Nothing secret is an option. With ingress and a custom AppArmor profile the
 Supervisor's rating is the maximum; the more important property is that every
 grant it omits is one it does not need.
 
 ## Unverified
 
-- That the M1XEP accepts the RP protocol on the non-secure port the ASCII
-  integration uses. ElkRP's templates default to the secure port with the
-  AES-wrapped login this project does not implement. One live test settles it.
+- The network path (an M1XEP's non-secure port) is unverified and now
+  secondary; the production panel is on serial.
 - Whether ingress refuses a non-admin user who knows the URL. Layer 5 makes
   this moot for access control; it still matters for the sidebar UX.
 - The RP-connected reply timing over the network: whether the integration's

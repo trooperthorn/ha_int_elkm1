@@ -100,6 +100,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
     <div class="field"><label>Baud</label><input id="cBaud" value="115200"></div>
     <div class="field"><label>RP access code</label><input id="cCode" type="password" class="mono" maxlength="6" autocomplete="off"></div>
   </div>
+  <p class="note" id="cRelease"></p>
   <p class="note">The RP access code is sent once for login and never stored. The session speaks the RP protocol reconstructed from ElkRP; it has not yet been verified against a live panel, so the first connection should be to a bench panel.</p>
   <div class="actions"><button class="btn primary" id="cGo">Log in</button><button class="btn" id="cCancel">Cancel</button></div>
 </dialog>
@@ -236,7 +237,7 @@ function showPanel(){
   $('#pDisc').onclick=async()=>{await api('/api/panel/disconnect',{method:'POST'});log('Disconnected');pollStatus()};
 }
 async function pollStatus(){try{const s=await api('/api/panel/status');$('#panelStatus').innerHTML=s.connected?`<span class="tag ok">Online</span> <span class="mono">${esc(s.login.firmware)} sn ${esc(s.login.serial_number)}</span>`:`<span class="tag bad">Offline</span>`;$('#btnConnect').textContent=s.connected?'Disconnect':'Connect'}catch(e){}}
-$('#btnConnect').onclick=async()=>{const s=await api('/api/panel/status');if(s.connected){await api('/api/panel/disconnect',{method:'POST'});log('Disconnected');return pollStatus()}const c=account.connection;$('#cMethod').value=c.method;$('#cHost').value=c.host;$('#cPort').value=c.port;$('#cSerial').value=c.serial_port;$('#cBaud').value=c.baud;$('#dlgConnect').showModal()};
+$('#btnConnect').onclick=async()=>{const s=await api('/api/panel/status');if(s.connected){await api('/api/panel/disconnect',{method:'POST'});log('Disconnected');return pollStatus()}const d=await api('/api/defaults');const c=d.from_app?d:account.connection;$('#cMethod').value=c.method;$('#cHost').value=c.host;$('#cPort').value=c.port;$('#cSerial').value=c.serial_port;$('#cBaud').value=c.baud;$('#cRelease').textContent=d.release_integration?'The elkm1 integration is disabled for the session and re-enabled afterwards; its entities are absent meanwhile.':'';$('#dlgConnect').showModal()};
 $('#cCancel').onclick=()=>$('#dlgConnect').close();
 $('#cGo').onclick=async()=>{try{const r=await api('/api/panel/connect',{method:'POST',body:{method:$('#cMethod').value,host:$('#cHost').value,port:+$('#cPort').value,serial_port:$('#cSerial').value,baud:+$('#cBaud').value,rp_code:$('#cCode').value}});$('#cCode').value='';$('#dlgConnect').close();log(`Logged in: firmware ${r.login.firmware}, serial ${r.login.serial_number}`,'ok');pollStatus()}catch(e){log('Connect failed: '+e.message,'bad')}};
 $('#iCancel').onclick=()=>$('#dlgImport').close();

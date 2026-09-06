@@ -20,22 +20,34 @@ panel_icon: mdi:shield-edit
 panel_title: Elk Programmer
 panel_admin: true
 
-# The one API grant: calling the elkm1 integration's session claim services.
+# The one API grant: disabling and re-enabling the elkm1 integration's entries
+# around a session (a serial port is exclusive) and, later, the session claim.
 homeassistant_api: true
 hassio_api: false
 hassio_role: default
 
+# The panel is reached over RS-232 from this host; uart maps the serial
+# devices into the container and the serial_port option picks one.
+uart: true
+
 map: []
 
 options:
+  connection: serial
+  baud: 115200
   host: ""
   port: 2101
+  release_integration: true
   allowed_users: []
   idle_minutes: 15
   read_only: true
 schema:
-  host: str
+  connection: list(serial|network)
+  serial_port: device(subsystem=tty)?
+  baud: int(300,115200)
+  host: str?
   port: port
+  release_integration: bool
   allowed_users:
     - str
   idle_minutes: int(1,120)
