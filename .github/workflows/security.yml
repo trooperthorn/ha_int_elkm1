@@ -47,6 +47,47 @@ jobs:
       - name: Install pinned scanner
         run: pip install "bandit==1.8.6"
       - name: Compile Python
-        run: python -m compileall -q custom_components tests
+        run: python -m compileall -q custom_components tests src tests_programmer
       - name: Bandit medium/high findings
-        run: bandit -q -r custom_components/elkm1 -ll
+        # B104: in app mode the service binds all interfaces on purpose; only the
+        # Supervisor's ingress proxy can reach the container (docs/programmer/app.md).
+        run: bandit -q -r custom_components/elkm1 src/elk_programmer -ll -s B104
+
+  shell-security:
+    name: ShellCheck app boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check shell programs
+        # with-contenv shebang, so the shell is declared; SC1091 skips the /usr/lib source that only exists in the image.
+        run: shellcheck --shell=bash --exclude=SC1091 elk_programmer_app/run.sh
+
+  app-image-security:
+    name: App image build and vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The same Dockerfile the Supervisor builds, installed from this commit
+      # rather than a release so pull requests are scanned before they merge.
+      - name: Build the actual app image
+        run: |
+          docker build --tag local/elk-programmer:${{ github.sha }} \
+            --build-arg BUILD_VERSION=0.0.0 \
+            --build-arg ELK_PROGRAMMER_SOURCE=git \
+            --build-arg ELK_PROGRAMMER_REF=${{ github.sha }} \
+            elk_programmer_app
+      - name: Verify the runtime
+        run: |
+          docker run --rm --entrypoint /bin/sh local/elk-programmer:${{ github.sha }} -c '/opt/elk/bin/python -c "import sys, elk_programmer; assert sys.version_info >= (3, 12); print(elk_programmer.__version__)"'
+          docker run --rm --entrypoint /bin/sh local/elk-programmer:${{ github.sha }} -c '! command -v git'
+          docker run --rm --entrypoint /bin/sh local/elk-programmer:${{ github.sha }} -c 'test -x /run.sh'
+      # Read-only token and a pinned Grype; HIGH/CRITICAL findings fail the pull request.
+      - name: Scan installed packages
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: local/elk-programmer:${{ github.sha }}
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: false
+          output-format: table
+          grype-version: v0.110.0

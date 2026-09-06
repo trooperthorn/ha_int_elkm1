@@ -25,7 +25,11 @@ access code is entered when a session opens and is never stored.
 
 The app is built on the Home Assistant host from its Dockerfile the first
 time it is installed; expect a few minutes while the base image and the
-service's Python dependencies download. No pre-built image is published yet.
+service's Python dependencies download. The build installs the programmer
+wheel that the GitHub Release of the same version published, after checking
+it against the release's SHA256SUMS. The wheel, the checksums, and an SPDX
+SBOM carry build provenance attestations that `gh attestation verify` can
+check against the release workflow run.
 
 ## Using it
 

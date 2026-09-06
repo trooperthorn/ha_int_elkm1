@@ -38,12 +38,11 @@ Dated open items.
   and `_end` services, the `remote_programming` binary sensor, the two events, and the
   Repair issues, as specified in `app.md`; then the app's calls to them through the core
   API proxy.
-- 2026-09-06, the app Dockerfile installs the service from `main`; once a release
-  that contains the service exists, install from the release tag (`v${BUILD_VERSION}`)
-  so the app version and the service version are the same commit.
-- 2026-09-06, publish the app image (the Dockerfile installs the service from the
-  GitHub repository, which does not exist yet) and add the release baseline to both
-  repositories.
+- 2026-09-06, pin the programmer's Python dependencies (a constraints file the
+  Dockerfile passes to pip) so the container's contents match the release SBOM.
+- 2026-09-06, a published multi-arch image with cosign signing would remove the
+  on-host build entirely; not started, the on-host build with a checksummed wheel is
+  the current design.
 - 2026-09-06, confirm on a real Supervisor whether a non-admin user who knows the
   ingress URL is refused; the allow-list does not depend on it but the docs say unverified.
 - 2026-09-06, the ASCII automation protocol (from `ha_int_elkm1`'s

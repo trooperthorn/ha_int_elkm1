@@ -1,6 +1,7 @@
 {
   "tag_prefix": "v",
   "timezone": "America/Chicago",
+  "archive": {"source": "custom_components/elkm1", "name": "elkm1.zip"},
   "release_paths": ["custom_components/elkm1", "elk_programmer_app", "src/elk_programmer"],
   "version_fields": [
     {"path": "custom_components/elkm1/manifest.json", "kind": "json", "key": "version"},

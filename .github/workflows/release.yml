@@ -1,4 +1,7 @@
-# A merge to main is the release trigger; see docs/operations.md.
+# A merge to main is the release trigger; see docs/operations.md. The release
+# carries the HACS archive and the programmer wheel, each with an SPDX SBOM,
+# checksums, and build provenance and SBOM attestations, so an install of
+# either can be verified against this workflow run.
 name: Release
 
 on:
@@ -30,12 +33,18 @@ jobs:
     needs: [tests, validate]
     runs-on: ubuntu-latest
     permissions:
+      attestations: write
       contents: write
+      id-token: write
     steps:
       - name: Check out the exact main commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
 
       - name: Resolve and validate the release version
         id: version
@@ -68,14 +77,82 @@ jobs:
           fi
           printf 'publish=true\n' >> "$GITHUB_OUTPUT"
 
-      # Immutable releases lock their tag at publication, so the sequence is:
-      # tag, draft, publish. A failed run resumes the draft; a published
-      # release is never touched.
+      - name: Build deterministic HACS archive
+        if: steps.version.outputs.publish == 'true'
+        run: python3 scripts/build_release_artifacts.py --output dist/elkm1.zip
+
+      # The app's Dockerfile installs this wheel from the release by version and
+      # checks it against SHA256SUMS, so the app never builds from a moving ref.
+      - name: Build the programmer wheel
+        if: steps.version.outputs.publish == 'true'
+        id: wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install "build==1.6.0"
+          python3 -m build --wheel --outdir dist .
+          WHEEL="$(basename "$(ls dist/elk_programmer-*.whl)")"
+          printf 'name=%s\n' "$WHEEL" >> "$GITHUB_OUTPUT"
+
+      # GitHub's attestation guidance names this action as its SBOM generator.
+      - name: Generate the archive SBOM
+        if: steps.version.outputs.publish == 'true'
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          file: dist/elkm1.zip
+          format: spdx-json
+          output-file: dist/elkm1.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+          dependency-snapshot: false
+
+      - name: Generate the wheel SBOM
+        if: steps.version.outputs.publish == 'true'
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          file: dist/${{ steps.wheel.outputs.name }}
+          format: spdx-json
+          output-file: dist/elk_programmer.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+          dependency-snapshot: false
+
+      - name: Generate release checksums
+        if: steps.version.outputs.publish == 'true'
+        working-directory: dist
+        run: sha256sum elkm1.zip "${{ steps.wheel.outputs.name }}" elkm1.spdx.json elk_programmer.spdx.json > SHA256SUMS
+
+      - name: Attest build provenance
+        if: steps.version.outputs.publish == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            dist/elkm1.zip
+            dist/${{ steps.wheel.outputs.name }}
+
+      - name: Attest the archive SBOM
+        if: steps.version.outputs.publish == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: dist/elkm1.zip
+          sbom-path: dist/elkm1.spdx.json
+
+      - name: Attest the wheel SBOM
+        if: steps.version.outputs.publish == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: dist/${{ steps.wheel.outputs.name }}
+          sbom-path: dist/elk_programmer.spdx.json
+
+      # Immutable releases lock their tag and assets at publication, so the
+      # sequence is: tag, draft, attach, publish. A failed run resumes the
+      # draft; a published release is never touched.
       - name: Stage immutable tag and draft release
         if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
+          WHEEL: ${{ steps.wheel.outputs.name }}
         shell: bash
         run: |
           set -euo pipefail
@@ -93,8 +170,16 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
               --title "$TAG" --generate-notes --verify-tag --draft
           fi
+          gh release upload "$TAG" \
+            dist/elkm1.zip \
+            "dist/$WHEEL" \
+            dist/elkm1.spdx.json \
+            dist/elk_programmer.spdx.json \
+            dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
 
-      - name: Publish and lock the release
+      - name: Publish and lock the complete release
         if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -105,13 +190,17 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         env:
           TAG: ${{ steps.version.outputs.tag }}
+          WHEEL: ${{ steps.wheel.outputs.name }}
         run: |
           {
             echo '### Release verification'
             echo
-            echo "Published \`$TAG\` from \`$GITHUB_SHA\`. HACS installs the tagged tree; verify with:"
+            echo "Published \`$TAG\` from \`$GITHUB_SHA\`. HACS installs \`elkm1.zip\`; the app installs \`$WHEEL\`."
             echo
             echo '```bash'
-            echo "gh api repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG --jq .object.sha"
+            echo "gh release download $TAG -R $GITHUB_REPOSITORY -p elkm1.zip -p '$WHEEL' -p SHA256SUMS"
+            echo 'sha256sum --check SHA256SUMS --ignore-missing'
+            echo "gh attestation verify elkm1.zip -R $GITHUB_REPOSITORY"
+            echo "gh attestation verify '$WHEEL' -R $GITHUB_REPOSITORY"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
