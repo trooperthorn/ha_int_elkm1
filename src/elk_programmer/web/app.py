@@ -529,11 +529,17 @@ def import_mdb(body: MdbRequest, request: Request) -> dict[str, Any]:
     try:
         from ..storage.mdb_import import OdbcSource, import_account, list_accounts
     except ImportError as err:
-        raise HTTPException(500, f"pyodbc is not installed: {err}") from err
+        _LOGGER.error("ElkRP import unavailable: %s", err)
+        raise HTTPException(500, "the Access ODBC support (pyodbc) is not installed") from err
     try:
         source = OdbcSource(body.path, body.password)
     except Exception as err:
-        raise HTTPException(400, f"could not open database: {err}") from err
+        # Driver messages can carry file paths and internals; keep them server side.
+        _LOGGER.error("could not open ElkRP database %s: %s", body.path, err)
+        raise HTTPException(
+            400,
+            "could not open the database: check the path, the password, and that ElkRP is closed",
+        ) from err
     try:
         if body.account_id is None:
             return {"accounts": list_accounts(source)}
@@ -567,7 +573,8 @@ async def panel_connect(body: ConnectRequest, request: Request) -> dict[str, Any
         else:
             transport = await TcpTransport.connect(host, port)
     except OSError as err:
-        raise HTTPException(400, f"could not open transport: {err}") from err
+        _LOGGER.error("could not open panel transport (%s): %s", body.method, err)
+        raise HTTPException(400, "could not open the connection to the panel") from err
     session = Session(transport, on_trace=state.on_trace)
     try:
         info = await session.login(body.rp_code)
