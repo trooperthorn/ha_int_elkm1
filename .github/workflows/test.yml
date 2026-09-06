@@ -40,13 +40,18 @@ jobs:
         run: python3 scripts/build_release_artifacts.py --validate-only
 
   programmer:
-    name: programmer (Python 3.14)
+    name: programmer (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is what the Alpine base image gives the app container; 3.14 is the workstation.
+        python: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: requirements-programmer.txt
       # The service has no Home Assistant dependency and its suite must not
