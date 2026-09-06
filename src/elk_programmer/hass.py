@@ -61,6 +61,17 @@ class HomeAssistant:
             raise HomeAssistantError("unexpected config entry listing")
         return [e for e in data if isinstance(e, dict)]
 
+    async def call_service(self, domain: str, service: str, data: dict[str, Any]) -> None:
+        """Call a core service, the way the SOC probe reports to its integration."""
+        async with httpx.AsyncClient(timeout=15, transport=self._transport) as client:
+            r = await client.post(
+                f"{self._http_base}/core/api/services/{domain}/{service}",
+                json=data,
+                headers={"Authorization": f"Bearer {self._token}"},
+            )
+        if r.status_code not in (200, 201):
+            raise HomeAssistantError(f"{domain}.{service} failed with HTTP {r.status_code}")
+
     async def set_entry_disabled(self, entry_id: str, disabled: bool) -> bool:
         """Disable or enable one entry; return whether core requires a restart."""
         async with websockets.connect(self._ws_url, open_timeout=15) as ws:

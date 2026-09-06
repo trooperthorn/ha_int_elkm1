@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Every panel session is announced to the `elkm1` integration through its
+  `programming_session_start` and `programming_session_end` services, so
+  the session is attributed to the app and the Home Assistant user rather
+  than reported as unknown.
 - The Dockerfile installs the programmer wheel published by the release of
   the same version and verifies its SHA-256 against the release's
   `SHA256SUMS`; releases carry SPDX SBOMs and provenance attestations, and CI
