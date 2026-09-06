@@ -19,6 +19,9 @@ carries only what a reader needs at the point of reading; explanation lives here
 - `cross_integration.md`: what is real integration code versus blueprint-only support for
   Alarmo, Better Thermostat, Davis Weather, UniFi Protect, Browser Mod, and ESP32
   Bluetooth proxies.
+- `programmer/README.md`: the index for the Elk Programmer service and app that share
+  this repository: the reconstructed RP programming protocol, record layouts, the
+  ElkRP database import, the Home Assistant app packaging and its security layers.
 - `../custom_components/elkm1/PROJECT_MAP.md`: the structural map of the integration's
   files and the library quirks a contributor must know before changing coordinator or
   entity code.

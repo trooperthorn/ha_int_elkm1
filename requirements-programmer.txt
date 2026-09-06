@@ -1,0 +1,11 @@
+# The programmer service's test environment: no Home Assistant harness, no
+# Access ODBC driver. The service itself is installed editable from this
+# repository (pip install -e .).
+fastapi>=0.141
+uvicorn[standard]>=0.40
+serialx>=1.9.0
+httpx>=0.28
+pytest>=9
+pytest-asyncio
+ruff
+mypy

@@ -38,3 +38,26 @@ jobs:
         run: pytest -ra --strict-markers tests/
       - name: Validate the release version fields
         run: python3 scripts/build_release_artifacts.py --validate-only
+
+  programmer:
+    name: programmer (Python 3.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements-programmer.txt
+      # The service has no Home Assistant dependency and its suite must not
+      # load the harness plugin, so it gets its own environment and configs.
+      - name: Install the service and its test tools
+        run: |
+          pip install -r requirements-programmer.txt
+          pip install -e . --no-deps
+      - name: Lint
+        run: ruff check src tests_programmer
+      - name: Type check
+        run: mypy --config-file mypy-programmer.ini
+      - name: Run the suite
+        run: pytest -c pytest-programmer.ini -ra --strict-markers

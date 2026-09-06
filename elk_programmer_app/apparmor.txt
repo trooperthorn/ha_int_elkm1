@@ -1,0 +1,36 @@
+#include <tunables/global>
+
+profile elk_programmer flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Capabilities the container start needs; the service itself needs none.
+  file,
+  signal (send) set=(kill,term,int,hup,cont),
+
+  # s6-overlay
+  /init ix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /run/{s6,s6-rc*,service}/** ix,
+  /package/** ix,
+  /command/** ix,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+  /run/{,**} rwk,
+  /dev/tty rw,
+
+  # bashio
+  /usr/lib/bashio/** ix,
+  /tmp/** rwk,
+
+  # Options and persistent data: the account files, passphrase hash, audit log.
+  /data/** rw,
+
+  # The service and its virtual environment.
+  /opt/elk/** rix,
+  /usr/lib/python3*/** r,
+
+  # Network: ingress from the Supervisor, TCP to the panel, and the core API proxy.
+  network tcp,
+}
