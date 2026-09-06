@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # is distributed by HACS and is not part of this package. See docs/programmer/.
 [project]
 name = "elk-programmer"
-version = "2026.09.06.3"
+version = "2026.09.06.4"
 description = "Installer programming application for Elk-M1 Gold panels, a replacement for ElkRP"
 # The app container runs the Alpine base image's Python (3.12 on Alpine 3.23);
 # CI proves the service on 3.12 and 3.14.
