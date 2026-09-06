@@ -90,7 +90,7 @@ def _version(value: Any) -> str:
         return ""
     try:
         n = int(value)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return str(value)
     return f"{(n >> 16) & 0xFF}.{(n >> 8) & 0xFF}.{n & 0xFF}"
 
