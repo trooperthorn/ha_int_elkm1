@@ -15,7 +15,7 @@ from custom_components.elkm1.helpers.elk.hub import Elk
 def _elk(url: str = "elk://1.2.3.4:2101", **extra) -> Elk:
     config = {"url": url, **extra}
     elk = Elk(config)
-    elk._connection.writer = MagicMock()  # so send()/send_raw() don't reject as disconnected
+    elk._connection.writer = MagicMock()  # so send() doesn't reject as disconnected
     return elk
 
 
@@ -111,8 +111,8 @@ def test_login_status_failure_disconnects(caplog):
 
 
 def test_got_first_message_fires_login_success_when_not_yet_logged_in():
-    """Non-secure schemes have no explicit login reply, so the first message
-    of any kind (a "VN" sync reply) is treated as proof of a working link."""
+    """Serial has no explicit login reply, so the first message of any kind
+    (a "VN" sync reply) is treated as proof of a working link."""
     elk = _elk()
     logins = []
     elk.add_handler("login", lambda **payload: logins.append(payload))
@@ -123,8 +123,8 @@ def test_got_first_message_fires_login_success_when_not_yet_logged_in():
 
 
 def test_got_first_message_does_nothing_once_already_logged_in():
-    """A secure scheme's real login event must not be overwritten by a later
-    first-message login synthesis."""
+    """A real login event must not be overwritten by a later first-message
+    login synthesis."""
     elk = _elk()
     elk._notifier.notify("login", {"succeeded": True})
     logins = []
@@ -145,23 +145,8 @@ def test_disconnected_resets_the_logged_in_flag():
 
 
 # --------------------------------------------------------------------------
-# _connected: credential handling and sync trigger
+# _connected: sync trigger
 # --------------------------------------------------------------------------
-
-
-def test_connected_sends_no_credentials_for_a_non_secure_scheme():
-    elk = _elk("elk://1.2.3.4:2101")
-    elk._connection.send_raw = MagicMock()
-    elk._notifier.notify("connected", {})
-    elk._connection.send_raw.assert_not_called()
-
-
-def test_connected_sends_userid_and_password_for_a_secure_scheme():
-    elk = _elk("elks://1.2.3.4:2601", userid="admin", password="secret")
-    elk._connection.send_raw = MagicMock()
-    elk._notifier.notify("connected", {})
-    elk._connection.send_raw.assert_any_call("admin")
-    elk._connection.send_raw.assert_any_call("secret")
 
 
 def test_connected_triggers_sync_and_requests_ua_last():

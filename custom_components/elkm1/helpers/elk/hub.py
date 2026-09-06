@@ -26,7 +26,6 @@ from .settings import Settings
 from .tasks import Tasks
 from .thermostats import Thermostats
 from .users import Users
-from .util import url_scheme_is_secure
 from .zones import Zones
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,9 +86,6 @@ class Elk:
             self._notifier.notify("login", {"succeeded": True})
 
     def _connected(self) -> None:
-        if url_scheme_is_secure(self._config["url"]):
-            self._connection.send_raw(self._config["userid"])
-            self._connection.send_raw(self._config["password"])
         self._call_sync_handlers()
 
     def _disconnected(self) -> None:

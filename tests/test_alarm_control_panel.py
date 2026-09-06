@@ -145,7 +145,7 @@ def test_changed_by_none_when_last_user_name_is_unknown():
 
 
 async def test_setup_entry_uses_real_area_indices_not_a_contiguous_range(
-    hass, mock_network_entry
+    hass, mock_serial_entry
 ):
     """A panel can have a gap (e.g. Area 2 never programmed) while a later
     area (e.g. Area 8) is real. range(num_areas) would create an entity for
@@ -159,10 +159,10 @@ async def test_setup_entry_uses_real_area_indices_not_a_contiguous_range(
         num_areas=3, areas={0: AreaData(), 2: AreaData(), 7: AreaData()}
     )
 
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
@@ -173,7 +173,7 @@ async def test_setup_entry_uses_real_area_indices_not_a_contiguous_range(
     def _async_add_entities(new_entities):
         added.extend(new_entities)
 
-    await async_setup_entry(hass, mock_network_entry, _async_add_entities)
+    await async_setup_entry(hass, mock_serial_entry, _async_add_entities)
 
     assert {p._area_index for p in added} == {0, 2, 7}
 

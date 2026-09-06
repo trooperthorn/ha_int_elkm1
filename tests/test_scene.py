@@ -73,7 +73,7 @@ async def test_async_activate_is_a_noop_when_obj_missing():
     entity.coordinator.async_queue_command.assert_not_called()
 
 
-async def test_setup_entry_creates_entity_for_configured_task(hass, mock_network_entry):
+async def test_setup_entry_creates_entity_for_configured_task(hass, mock_serial_entry):
     task = MagicMock()
     task.index = 0
     task.configured = True
@@ -81,17 +81,17 @@ async def test_setup_entry_creates_entity_for_configured_task(hass, mock_network
     coordinator.data = ElkPanelData(tasks=[task])
     coordinator.async_add_listener.return_value = lambda: None
 
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
     )
 
     added: list = []
-    await async_setup_entry(hass, mock_network_entry, lambda ents: added.extend(ents))
+    await async_setup_entry(hass, mock_serial_entry, lambda ents: added.extend(ents))
 
     assert len(added) == 1
     assert isinstance(added[0], ElkTask)

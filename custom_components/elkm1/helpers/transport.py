@@ -24,17 +24,9 @@ _LOGGER = logging.getLogger(__name__)
 INITIAL_RETRY_DELAY = 1
 MAX_RETRY_DELAY = 60
 
-# The manager scales the heartbeat window past the poll interval; see docs/protocol.md.
-DEFAULT_HEARTBEAT_TIMEOUT = 120.0
-HEARTBEAT_MARGIN = 30.0
-
 
 class ConnectionTimeoutError(Exception):
     """A validation connection never received an ELK response."""
-
-
-class InvalidAuthError(Exception):
-    """A secure M1XEP rejected the supplied credentials."""
 
 
 async def _entry_read_stream(connection: Connection, reader: asyncio.StreamReader) -> None:
@@ -44,7 +36,6 @@ async def _entry_read_stream(connection: Connection, reader: asyncio.StreamReade
         data = await reader.read(500)
         if not data:
             break
-        connection.heartbeat()
         read_buffer += data.decode("ISO-8859-1")
         frames, read_buffer = extract_frames(read_buffer)
         if len(read_buffer) > MAX_FRAME_CHARS:
@@ -91,23 +82,18 @@ async def _entry_read_stream(connection: Connection, reader: asyncio.StreamReade
 async def _entry_connect(connection: Connection) -> None:
     """Own one entry's open, stream supervision, and reconnect loop."""
     _LOGGER.info("Connecting to ElkM1 at %s", connection.url)
-    scheme, dest, param, ssl_context = parse_url(connection.url)
+    dest = parse_url(connection.url)
     cached_baud: int | None = connection.cached_baud
 
     while True:
         retry_delay = connection.retry_delay
         try:
             async with asyncio.timeout(30):
-                if scheme == "serial":
-                    baud, reader, connection.writer = await open_probed_serial(dest, cached_baud)
-                    connection.cached_baud = baud
-                    cached_baud = baud
-                    if connection.on_baud_detected:
-                        connection.on_baud_detected(baud)
-                else:
-                    reader, connection.writer = await asyncio.open_connection(
-                        host=dest, port=param, ssl=ssl_context
-                    )
+                baud, reader, connection.writer = await open_probed_serial(dest, cached_baud)
+                connection.cached_baud = baud
+                cached_baud = baud
+                if connection.on_baud_detected:
+                    connection.on_baud_detected(baud)
         except asyncio.CancelledError:
             raise
         except (TimeoutError, ValueError, OSError, BaudProbeError) as err:
@@ -125,10 +111,6 @@ async def _entry_connect(connection: Connection) -> None:
             asyncio.create_task(_entry_read_stream(connection, reader), name="elkm1-read-stream"),
             asyncio.create_task(connection._write_stream(), name="elkm1-write-stream"),
         }
-        if scheme != "serial":
-            stream_tasks.add(
-                asyncio.create_task(_entry_heartbeat(connection), name="elkm1-heartbeat")
-            )
         connection.tasks.update(stream_tasks)
         if connection.on_transport_connected:
             connection.on_transport_connected()
@@ -153,20 +135,6 @@ async def _entry_connect(connection: Connection) -> None:
             connection.on_failure(_failure_category(failure), str(failure))
         connection.retry_delay = min(MAX_RETRY_DELAY, connection.retry_delay * 2)
         await asyncio.sleep(connection.retry_delay)
-
-
-async def _entry_heartbeat(connection: Connection) -> None:
-    """Supervise heartbeat without allowing a child task to reconnect."""
-    timeout = connection.heartbeat_timeout
-    while connection.writer:
-        connection.heartbeat_event.clear()
-        try:
-            async with asyncio.timeout(timeout):
-                await connection.heartbeat_event.wait()
-        except TimeoutError:
-            if connection.is_paused():
-                continue
-            raise ConnectionError("ELK heartbeat timed out") from None
 
 
 async def _async_close_transport(connection: Connection, tasks: set[asyncio.Task[Any]]) -> None:
@@ -209,7 +177,6 @@ class ElkConnectionManager:
         *,
         cached_baud: int | None = None,
         on_baud_detected: Any = None,
-        heartbeat_timeout: float = DEFAULT_HEARTBEAT_TIMEOUT,
     ) -> None:
         self.elk = elk
         self.connection = elk.connection
@@ -223,7 +190,6 @@ class ElkConnectionManager:
         self.detected_baud = cached_baud
 
         self.connection.retry_delay = INITIAL_RETRY_DELAY
-        self.connection.heartbeat_timeout = heartbeat_timeout
         self.connection.on_failure = self._on_failure
         self.connection.on_transport_connected = self._on_transport_connected
         if cached_baud is not None:
@@ -263,7 +229,7 @@ class ElkConnectionManager:
             self.last_failure = None
         else:
             self.last_failure_category = "authentication"
-            self.last_failure = "M1XEP rejected the configured credentials"
+            self.last_failure = "ELK-M1 rejected the connection"
 
     def start(self) -> asyncio.Task[None]:
         """Start or return the owned connection task."""
@@ -300,55 +266,3 @@ class ElkConnectionManager:
 async def validate_serial_port(port: str, cached_baud: int | None = None) -> int:
     """Verify a selected serial port and return its detected ELK baud."""
     return await probe_baud(port, cached_baud)
-
-
-async def validate_network_connection(
-    url: str,
-    userid: str | None = None,
-    password: str | None = None,
-    timeout: float = 10.0,
-) -> None:
-    """Verify network transport, ELK identity response, and secure login."""
-    config: dict[str, Any] = {"url": url, "element_list": ["panel"]}
-    if userid is not None:
-        config["userid"] = userid
-    if password is not None:
-        config["password"] = password
-
-    elk = Elk(config)
-    manager = ElkConnectionManager(elk)
-    got_version = asyncio.Event()
-    login_failed = asyncio.Event()
-
-    def _on_vn(**_kwargs: Any) -> None:
-        got_version.set()
-
-    def _on_login(succeeded: bool) -> None:
-        manager.mark_login(succeeded)
-        if not succeeded:
-            login_failed.set()
-
-    elk.add_handler("VN", _on_vn)
-    elk.add_handler("login", _on_login)
-    version_task = asyncio.create_task(got_version.wait(), name="elkm1-validate-version")
-    auth_task = asyncio.create_task(login_failed.wait(), name="elkm1-validate-login")
-    try:
-        manager.start()
-        try:
-            async with asyncio.timeout(timeout):
-                await asyncio.wait(
-                    (version_task, auth_task),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-        except TimeoutError as exc:
-            raise ConnectionTimeoutError(f"No ELK response from {url}") from exc
-        if login_failed.is_set():
-            raise InvalidAuthError(f"Authentication rejected by {url}")
-        if not got_version.is_set():
-            raise ConnectionTimeoutError(f"No ELK response from {url}")
-    finally:
-        for task in (version_task, auth_task):
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(version_task, auth_task, return_exceptions=True)
-        await manager.async_stop()

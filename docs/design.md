@@ -17,19 +17,18 @@ through per-element callbacks, and pushes the snapshot onward with
 polling `update_interval` is a bounded AS/AZ/CS/SS/LW safety net, not the primary data path.
 
 Setup waits for the panel's `login` notifier event rather than `connected`. `connected`
-only means the socket or serial link opened; for the secure network schemes the credentials
-are sent after that, and only the M1XEP's reply proves them accepted or rejected. The
-schemes with no authentication fire the same `login` event when the first `vn` sync reply
-arrives, so waiting on `login` uniformly proves the panel is answering and lets a rejected
-login raise `ConfigEntryAuthFailed` instead of a generic timeout.
+only means the serial link opened; since serial has no credentials to send, `login`
+fires as soon as the first `vn` sync reply arrives, uniformly proving the panel is
+answering. Network/M1XEP connectivity (and the credential exchange after `connected`
+that it required) was removed entirely 2026-09-05 as a deliberate security posture, not
+merely left unsupported - see `docs/decisions.md`.
 
 The first-setup timeout is a ceiling on how long setup waits before surfacing
 `ConfigEntryNotReady`, sized for a full nine-rate baud sweep plus a couple of backoff
 cycles. It is not a retry count; the transport retries indefinitely on its own.
 
-The config flow builds a fully scheme-prefixed URL (`elk://`, `elks://`, `elksv1_2://`,
-`serial://`), and the coordinator uses it as-is. Re-wrapping it in another scheme was the
-cause of one earlier connection bug.
+The config flow builds a `serial://` URL, the only scheme the coordinator ever sees.
+Re-wrapping it in another scheme was the cause of one earlier connection bug.
 
 `helpers/elk/elements.py`'s `Elements` allocates the hardware-maximum number of every
 element (eight areas, 208 zones, and so on - `helpers/elk/const.py`'s `Max`). Only elements
@@ -63,7 +62,7 @@ promoted to typed fields, replacing an earlier untyped dictionary with string ke
 this repository owns `Connection` directly (see `docs/decisions.md` 2026-09-05; this split
 predates that removal and is kept deliberately). The manager supervises open, streams,
 bounded reconnect backoff, cancellation, and awaited close, and adds host-side baud-rate
-detection for serial links. Network links have no baud rate to detect.
+detection, since serial is the only transport this integration speaks.
 
 Baud detection reuses `helpers/elk/message.py`'s `vn_encode()` and `decode()` so the
 checksum and framing logic stays identical to the one place this repository implements it.
@@ -72,11 +71,13 @@ reopening the port; the second open wastes a round trip and, on some USB-serial 
 trips DTR-reset or settling quirks. `PORT_SETTLE_DELAY` gives the port a brief pause after
 every open, before sending the probe command, for the same reason - see `docs/decisions.md`
 2026-09-05. Reconnects try the cached rate first so they lock on immediately. `probe_baud`
-is the validation-only variant for the config flow and USB discovery, which need a yes or
-no and do not keep the connection.
+is the validation-only variant for the config flow, which needs a yes or no and does not
+keep the connection.
 
-The network heartbeat window is scaled with the configured poll interval; the reasoning
-and the numbers are in `protocol.md`.
+A heartbeat supervisor used to scale its window with the configured poll interval to
+tolerate a network link going silent without a clean disconnect; it was removed with
+network connectivity 2026-09-05, since a broken serial/USB cable fails a read or write
+immediately rather than going silently half-open the way a stale TCP socket can.
 
 `cw_encode`/`rw_encode`/`tr_encode`/`ts_encode` in `helpers/elk/message.py` declare their
 real reply codes directly (fixed relative to the removed `elkm1-lib` 2.2.15 dependency,

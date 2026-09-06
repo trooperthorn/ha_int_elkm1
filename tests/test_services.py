@@ -16,9 +16,9 @@ from custom_components.elkm1.services import async_setup_services
 
 
 @pytest.fixture
-async def registered_coordinator(hass, mock_network_entry):
+async def registered_coordinator(hass, mock_serial_entry):
     """A config entry with runtime_data wired up, and services registered."""
-    mock_network_entry.add_to_hass(hass)
+    mock_serial_entry.add_to_hass(hass)
     coordinator = MagicMock()
     coordinator.speak_word = AsyncMock()
     coordinator.speak_phrase = AsyncMock()
@@ -26,11 +26,11 @@ async def registered_coordinator(hass, mock_network_entry):
     coordinator.display_message = AsyncMock()
     coordinator.data = ElkPanelData(zones_faulted=[0, 3], areas={0: AreaData(arm_up_state=0)})
 
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
-        config=dict(mock_network_entry.data),
+        config=dict(mock_serial_entry.data),
         coordinator=coordinator,
     )
 

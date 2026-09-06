@@ -33,65 +33,65 @@ def _setting(index: int, value_format, default_name: bool = False) -> MagicMock:
     return setting
 
 
-async def test_setup_entry_skips_default_named_settings(hass, mock_network_entry):
+async def test_setup_entry_skips_default_named_settings(hass, mock_serial_entry):
     time_setting = _setting(0, SettingFormat.TIME_OF_DAY, default_name=True)
     coordinator = MagicMock()
     coordinator.data = ElkPanelData(settings=[time_setting])
     coordinator.async_add_listener.return_value = lambda: None
 
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
     )
 
     added: list = []
-    await async_setup_entry(hass, mock_network_entry, lambda ents: added.extend(ents))
+    await async_setup_entry(hass, mock_serial_entry, lambda ents: added.extend(ents))
 
     assert added == []
 
 
-async def test_setup_entry_skips_non_time_of_day_settings(hass, mock_network_entry):
+async def test_setup_entry_skips_non_time_of_day_settings(hass, mock_serial_entry):
     number_setting = _setting(0, SettingFormat.NUMBER)
     coordinator = MagicMock()
     coordinator.data = ElkPanelData(settings=[number_setting])
     coordinator.async_add_listener.return_value = lambda: None
 
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
     )
 
     added: list = []
-    await async_setup_entry(hass, mock_network_entry, lambda ents: added.extend(ents))
+    await async_setup_entry(hass, mock_serial_entry, lambda ents: added.extend(ents))
 
     assert added == []
 
 
-async def test_setup_entry_creates_entity_for_time_of_day_setting(hass, mock_network_entry):
+async def test_setup_entry_creates_entity_for_time_of_day_setting(hass, mock_serial_entry):
     time_setting = _setting(0, SettingFormat.TIME_OF_DAY)
     coordinator = MagicMock()
     coordinator.data = ElkPanelData(settings=[time_setting])
     coordinator.async_add_listener.return_value = lambda: None
 
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
     )
 
     added: list = []
-    await async_setup_entry(hass, mock_network_entry, lambda ents: added.extend(ents))
+    await async_setup_entry(hass, mock_serial_entry, lambda ents: added.extend(ents))
 
     assert len(added) == 1
     assert isinstance(added[0], ElkTimeOfDay)

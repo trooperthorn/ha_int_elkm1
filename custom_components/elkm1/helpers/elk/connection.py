@@ -34,16 +34,15 @@ class QueuedWrite(NamedTuple):
     msg: str
     response_cmd: str | None
     timeout: float = 5.0
-    raw: bool = False
 
 
 class Connection:
     """Connection state, outbound write queue, and per-entry lifecycle fields.
 
-    `url`, `cached_baud`, `retry_delay`, `heartbeat_timeout`, and the
-    `on_*` callbacks are read/written directly by
-    `helpers/transport.py`'s entry-owned supervisor functions - they are
-    this class's own public state, not another package's internals.
+    `url`, `cached_baud`, `retry_delay`, and the `on_*` callbacks are
+    read/written directly by `helpers/transport.py`'s entry-owned supervisor
+    functions - they are this class's own public state, not another
+    package's internals.
     """
 
     def __init__(self, url: str, notifier: Notifier) -> None:
@@ -56,13 +55,11 @@ class Connection:
         self._write_queue: deque[QueuedWrite] = deque()
         self._check_write_queue = asyncio.Event()
         self.response_received = asyncio.Event()
-        self.heartbeat_event = asyncio.Event()
         self.tasks: set[asyncio.Task[Any]] = set()
 
         # Per-entry lifecycle state, set by helpers/transport.py across reconnects.
         self.cached_baud: int | None = None
         self.retry_delay: int = 1
-        self.heartbeat_timeout: float = 120.0
         self.on_failure: Callable[[str, str], None] | None = None
         self.on_transport_connected: Callable[[], None] | None = None
         self.on_baud_detected: Callable[[int], None] | None = None
@@ -71,10 +68,7 @@ class Connection:
         """Drain the outbound queue: checksum, write, and await any reply."""
 
         async def write_msg(q_entry: QueuedWrite) -> None:
-            if q_entry.raw:
-                msg = f"{q_entry.msg}\r\n"
-            else:
-                msg = f"{q_entry.msg}{_checksum(q_entry.msg)}\r\n"
+            msg = f"{q_entry.msg}{_checksum(q_entry.msg)}\r\n"
             _LOGGER.debug("write_data '%s'", msg[:-2])
             assert self.writer is not None
             self.writer.write(msg.encode())
@@ -118,14 +112,6 @@ class Connection:
             raise ConnectionError("ELK-M1 command rejected because the transport is disconnected")
         self._send(QueuedWrite(msg.message, msg.response_command), priority_send)
 
-    def send_raw(self, msg: str) -> None:
-        """Queue a raw line (e.g. login credentials) with no checksum added."""
-        if self._paused:
-            raise ConnectionError("ELK-M1 raw command rejected while the transport is paused")
-        if self.writer is None:
-            raise ConnectionError("ELK-M1 raw command rejected because the transport is disconnected")
-        self._send(QueuedWrite(msg, None, raw=True), False)
-
     def is_connected(self) -> bool:
         """Whether a transport is currently open."""
         return self.writer is not None
@@ -157,7 +143,3 @@ class Connection:
                 task.cancel()
         self.tasks = set()
         self._notifier.notify("disconnected", {})
-
-    def heartbeat(self) -> None:
-        """Record that traffic was seen (resets the heartbeat timeout)."""
-        self.heartbeat_event.set()

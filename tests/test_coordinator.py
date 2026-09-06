@@ -16,9 +16,9 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.elkm1.const import (
     CONF_CONNECTION_TYPE,
-    CONF_HOST,
     CONF_PIN,
-    CONNECTION_NETWORK,
+    CONF_SERIAL_PORT,
+    CONNECTION_SERIAL,
 )
 from custom_components.elkm1.coordinator import ElkDataUpdateCoordinator
 from custom_components.elkm1.helpers.elk.const import (
@@ -29,14 +29,13 @@ from custom_components.elkm1.helpers.elk.const import (
     ZoneLogicalStatus,
     ZoneType,
 )
-from custom_components.elkm1.helpers.transport import ElkConnectionManager
 
 
 def _make_coordinator(hass, **data_overrides) -> ElkDataUpdateCoordinator:
     """Build a coordinator without going through ConfigEntry/DataUpdateCoordinator.__init__ ceremony."""
     data = {
-        CONF_CONNECTION_TYPE: CONNECTION_NETWORK,
-        CONF_HOST: "elk://1.2.3.4",
+        CONF_CONNECTION_TYPE: CONNECTION_SERIAL,
+        CONF_SERIAL_PORT: "COM3",
         CONF_PIN: "1234",
         **data_overrides,
     }
@@ -200,48 +199,12 @@ async def test_poll_interval_is_configurable(hass):
     coordinator = ElkDataUpdateCoordinator(
         hass,
         {
-            CONF_CONNECTION_TYPE: CONNECTION_NETWORK,
-            CONF_HOST: "elk://1.2.3.4",
+            CONF_CONNECTION_TYPE: CONNECTION_SERIAL,
+            CONF_SERIAL_PORT: "COM3",
         },
         poll_interval=90,
     )
     assert coordinator.update_interval == timedelta(seconds=90)
-
-
-@pytest.mark.parametrize(
-    ("poll_interval", "expected_heartbeat_timeout"),
-    [
-        (30, 120.0),  # default poll interval stays under the default heartbeat window
-        (90, 120.0),  # poll_interval + 30s margin still under the default window
-        (200, 230.0),  # a long poll interval must scale the heartbeat window past it
-        (300, 330.0),  # MAX_POLL_INTERVAL
-    ],
-)
-async def test_async_setup_scales_heartbeat_timeout_with_poll_interval(
-    hass, poll_interval, expected_heartbeat_timeout
-):
-    """A poll interval past the default 120s heartbeat window must not force reconnects."""
-    coordinator = ElkDataUpdateCoordinator(
-        hass,
-        {CONF_CONNECTION_TYPE: CONNECTION_NETWORK, CONF_HOST: "elk://1.2.3.4"},
-        poll_interval=poll_interval,
-    )
-    captured: dict[str, float] = {}
-    original_init = ElkConnectionManager.__init__
-
-    def _spy_init(self, elk, **kwargs):
-        captured["heartbeat_timeout"] = kwargs.get("heartbeat_timeout")
-        original_init(self, elk, **kwargs)
-
-    with (
-        patch.object(ElkConnectionManager, "__init__", _spy_init),
-        patch.object(ElkConnectionManager, "start", lambda self: None),
-        patch("custom_components.elkm1.coordinator.CONNECT_TIMEOUT", 0.05),
-        pytest.raises(UpdateFailed),
-    ):
-        await coordinator._async_setup()
-
-    assert captured["heartbeat_timeout"] == expected_heartbeat_timeout
 
 
 @pytest.mark.parametrize(
@@ -566,75 +529,8 @@ def test_connected_reflects_the_elk_instance(hass):
 
 
 def test_build_connection_url_raises_for_missing_serial_port(hass):
-    from custom_components.elkm1.const import CONNECTION_SERIAL
-
     with pytest.raises(ValueError, match="Serial port not configured"):
-        _make_coordinator(hass, **{CONF_CONNECTION_TYPE: CONNECTION_SERIAL})
-
-
-def test_build_connection_url_raises_for_missing_host(hass):
-    with pytest.raises(ValueError, match="Host not configured"):
-        _make_coordinator(hass, **{CONF_HOST: ""})
-
-
-def test_build_connection_url_raises_for_unknown_connection_type(hass):
-    with pytest.raises(ValueError, match="Unknown connection type"):
-        _make_coordinator(hass, **{CONF_CONNECTION_TYPE: "carrier_pigeon"})
-
-
-def test_build_connection_url_defaults_the_network_port(hass):
-    coordinator = _make_coordinator(hass, **{CONF_HOST: "1.2.3.4"})
-    assert coordinator._url == "elk://1.2.3.4:2101"
-
-
-def test_obfuscated_url_passes_through_serial_urls_unredacted(hass):
-    from custom_components.elkm1.const import CONF_SERIAL_PORT, CONNECTION_SERIAL
-
-    coordinator = _make_coordinator(
-        hass, **{CONF_CONNECTION_TYPE: CONNECTION_SERIAL, CONF_SERIAL_PORT: "COM3"}
-    )
-    assert coordinator._obfuscated_url() == "serial://COM3"
-
-
-def test_obfuscated_url_redacts_the_host_but_keeps_the_scheme(hass):
-    coordinator = _make_coordinator(hass)
-    assert coordinator._obfuscated_url() == "elk://<redacted>"
-
-
-def test_obfuscated_url_falls_back_when_there_is_no_scheme(hass):
-    coordinator = _make_coordinator(hass)
-    coordinator._url = "not-a-url"
-    assert coordinator._obfuscated_url() == "<redacted>"
-
-
-# --------------------------------------------------------------------------
-# _async_setup: secure network credentials and error handling
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("_patch_login", [True], indirect=True)
-async def test_async_setup_sends_configured_credentials_for_a_secure_scheme(hass, _patch_login):
-    from custom_components.elkm1.const import CONF_PASSWORD, CONF_USERNAME
-
-    coordinator = _make_coordinator(
-        hass,
-        **{CONF_HOST: "elks://1.2.3.4:2601", CONF_USERNAME: "admin", CONF_PASSWORD: "secret"},
-    )
-    captured_config: dict[str, object] = {}
-    from custom_components.elkm1.helpers.elk import Elk as RealElk
-
-    original_init = RealElk.__init__
-
-    def _spy_init(self, config, *args, **kwargs):
-        captured_config.update(config)
-        original_init(self, config, *args, **kwargs)
-
-    with patch.object(RealElk, "__init__", _spy_init):
-        await coordinator._async_setup()
-
-    assert captured_config["userid"] == "admin"
-    assert captured_config["password"] == "secret"
-    await coordinator.async_disconnect()
+        _make_coordinator(hass, **{CONF_SERIAL_PORT: ""})
 
 
 async def test_async_setup_logs_recovery_only_after_a_prior_failure(hass, caplog):

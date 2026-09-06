@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from custom_components.elkm1.helpers.elk.connection import Connection, QueuedWrite
+from custom_components.elkm1.helpers.elk.connection import Connection
 from custom_components.elkm1.helpers.elk.message import checksum
 from custom_components.elkm1.helpers.elk.notify import Notifier
 
@@ -43,19 +43,6 @@ def test_send_rejects_while_paused():
         connection.send(MagicMock(message="06vn00", response_command="VN"))
 
 
-def test_send_raw_rejects_when_disconnected():
-    connection = Connection("elk://test", Notifier())
-    with pytest.raises(ConnectionError, match="disconnected"):
-        connection.send_raw("someuser")
-
-
-def test_send_raw_rejects_while_paused():
-    connection = _connected()
-    connection.pause()
-    with pytest.raises(ConnectionError, match="paused"):
-        connection.send_raw("someuser")
-
-
 def test_send_queues_in_fifo_order_by_default():
     connection = _connected()
     connection.send(MagicMock(message="one", response_command=None))
@@ -70,14 +57,6 @@ def test_send_with_priority_jumps_the_queue():
     connection.send(MagicMock(message="urgent", response_command=None), priority_send=True)
 
     assert [q.msg for q in connection._write_queue] == ["urgent", "normal"]
-
-
-def test_send_raw_queues_a_raw_entry_with_no_response_command():
-    connection = _connected()
-    connection.send_raw("myusername")
-
-    entry = connection._write_queue[0]
-    assert entry == QueuedWrite("myusername", None, timeout=5.0, raw=True)
 
 
 def test_send_sets_the_check_write_queue_event():
@@ -119,18 +98,6 @@ def test_is_connected_reflects_writer_presence():
     assert connection.is_connected() is False
     connection.writer = MagicMock()
     assert connection.is_connected() is True
-
-
-# --------------------------------------------------------------------------
-# heartbeat
-# --------------------------------------------------------------------------
-
-
-def test_heartbeat_sets_the_heartbeat_event():
-    connection = Connection("elk://test", Notifier())
-    assert not connection.heartbeat_event.is_set()
-    connection.heartbeat()
-    assert connection.heartbeat_event.is_set()
 
 
 # --------------------------------------------------------------------------
@@ -198,22 +165,6 @@ async def test_write_stream_writes_a_checksummed_crlf_terminated_frame():
     writer.write.assert_called_once()
     sent_bytes = writer.write.call_args[0][0]
     assert sent_bytes == f"06vn00{checksum('06vn00')}\r\n".encode()
-
-
-async def test_write_stream_writes_a_raw_frame_with_no_checksum():
-    connection = Connection("elk://test", Notifier())
-    writer = MagicMock()
-    connection.writer = writer
-    connection.send_raw("myusername")
-
-    stream_task = asyncio.create_task(connection._write_stream())
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-    connection.writer = None
-    connection._check_write_queue.set()
-    await stream_task
-
-    writer.write.assert_called_once_with(b"myusername\r\n")
 
 
 async def test_write_stream_clears_awaiting_response_once_reply_arrives():

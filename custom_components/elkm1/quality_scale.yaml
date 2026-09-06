@@ -23,11 +23,13 @@ rules:
   config-flow-test-coverage:
     status: done
     comment: |
-      tests/test_config_flow.py covers manual network, selected-port serial,
-      DHCP/directed discovery, secure auth versus timeout, duplicate identity,
-      network/serial reconfigure mismatch behavior, reauth, options, and the
-      explicitly supported multi-panel policy. Generic USB discovery is not
-      retained because bridge VID/PID metadata is not ELK-product-specific.
+      tests/test_config_flow.py covers selected-port serial setup, duplicate
+      identity, reconfigure mismatch behavior, options, and the explicitly
+      supported multi-panel policy. Network/M1XEP connectivity (manual
+      network entry, DHCP/directed discovery, secure auth, reauth) was
+      removed entirely 2026-09-05 as a deliberate security posture - see
+      docs/decisions.md. Generic USB discovery is not retained because
+      bridge VID/PID metadata is not ELK-product-specific.
   config-flow: done
   dependency-transparency:
     status: done
@@ -48,7 +50,7 @@ rules:
       ADD BACK AND VERIFY" draft section left in place.
   docs-installation-instructions:
     status: done
-    comment: README's Installation section covers HACS, manual install, and initial setup (discovery vs. manual vs. serial).
+    comment: README's Installation section covers HACS, manual install, and initial serial setup.
   docs-removal-instructions:
     status: done
     comment: README's "Removing the integration" section.
@@ -64,7 +66,7 @@ rules:
   runtime-data: done
   test-before-configure:
     status: done
-    comment: config_flow.py's validate_input() opens a real, briefly-lived connection before creating the entry.
+    comment: config_flow.py's async_step_user calls validate_serial_port(), which opens a real, briefly-lived connection before creating the entry.
   test-before-setup:
     status: done
     comment: |
@@ -93,7 +95,7 @@ rules:
       where to find Configure/Reconfigure.
   docs-installation-parameters:
     status: done
-    comment: strings.json's user/manual_connection/serial step descriptions document every field required during setup.
+    comment: strings.json's user/reconfigure step descriptions document every field required during setup.
   entity-unavailable:
     status: done
     comment: Inherited from CoordinatorEntity, tracking coordinator.last_update_success.
@@ -118,27 +120,29 @@ rules:
       sensor (zone bypass/trigger services), climate, light, number,
       scene, time. binary_sensor is read-only and left unset.
   reauthentication-flow:
-    status: done
+    status: exempt
     comment: |
-      async_step_reauth/async_step_reauth_confirm, triggered by
-      ConfigEntryAuthFailed on a real "login" failure from the panel.
-      Serial connections (no username/password) abort as
-      reauth_unsupported rather than showing an inapplicable form.
+      Serial has no credentials to reauthenticate - the removed network
+      transport (2026-09-05, see docs/decisions.md) was the only path with
+      a username/password to replace. A serial connection failure surfaces
+      through ConfigEntryNotReady/reconfigure instead.
   test-coverage:
     status: done
     comment: |
       Measured 2026-09-05: 99% overall line coverage across
       custom_components/elkm1 (4038 statements, 11 missed; 969 tests),
       raised from an earlier 82% baseline. Every platform/entity module
-      previously below threshold (device_action.py, util.py, discovery.py,
-      transport.py, climate.py, sensor.py, time.py, baud_probe.py,
-      coordinator.py, __init__.py, binary_sensor.py, alarm_control_panel.py,
-      config_flow.py) is now at 97-100%. The handful of remaining missed
-      lines (alarm_control_panel.py:94, services.py:74, one or two lines
-      each in discovery.py/baud_probe.py/message.py/transport.py) are
-      defensive branches not practically reachable through the public
-      surface exercised by tests. Live hardware qualification is tracked
-      separately in docs/live_qualification.md.
+      previously below threshold (device_action.py, util.py, transport.py,
+      climate.py, sensor.py, time.py, baud_probe.py, coordinator.py,
+      __init__.py, binary_sensor.py, alarm_control_panel.py, config_flow.py)
+      is now at 97-100%. The handful of remaining missed lines
+      (alarm_control_panel.py:94, services.py:74, one or two lines each in
+      baud_probe.py/message.py/transport.py) are defensive branches not
+      practically reachable through the public surface exercised by tests.
+      Live hardware qualification is tracked separately in
+      docs/live_qualification.md. Network transport and its discovery
+      module were removed entirely 2026-09-05 (see docs/decisions.md), not
+      merely left untested.
 
   # Gold
   devices:
@@ -151,17 +155,17 @@ rules:
       granularity.
   diagnostics: done
   discovery-update-info:
-    status: done
-    comment: async_update_entry_from_discovery updates a config entry's host if the panel's discovered IP changes.
+    status: exempt
+    comment: Network/M1XEP discovery (the only path with a discoverable address to update) was removed entirely 2026-09-05 - see docs/decisions.md.
   discovery:
-    status: done
+    status: exempt
     comment: |
-      DHCP plus helpers/elk/discovery.py's UDP broadcast/directed discovery
-      (ported from the former elkm1-lib dependency, now owned directly - see
-      docs/decisions.md 2026-09-05) cover network XEP interfaces. Serial
-      remains an explicit SerialPortSelector path. Generic FTDI/PL2303/
-      CP2102/CH340 matches were removed because they identify bridge chips,
-      not ELK products.
+      Serial/USB is the only supported transport (network/M1XEP removed
+      entirely 2026-09-05, a deliberate security posture - see
+      docs/decisions.md). Generic FTDI/PL2303/CP2102/CH340 USB matches are
+      deliberately not used because they identify bridge chips, not ELK
+      products, so there is no discoverable signal left for this
+      integration to use.
   docs-data-update:
     status: done
     comment: README's Architecture section explains the push-first/poll-fallback data flow.
@@ -240,7 +244,7 @@ rules:
       docs/decisions.md 2026-09-05.
   reconfiguration-flow:
     status: done
-    comment: async_step_reconfigure (network) and async_step_reconfigure_serial, both via async_update_and_abort.
+    comment: async_step_reconfigure (serial-only since 2026-09-05) via async_update_and_abort.
   repair-issues:
     status: done
     comment: |
@@ -266,7 +270,7 @@ rules:
       cleanup.
   inject-websession:
     status: exempt
-    comment: No HTTP requests - this integration only speaks the Elk-M1 ASCII protocol over serial/TCP.
+    comment: No HTTP requests - this integration only speaks the Elk-M1 ASCII protocol over serial.
   strict-typing:
     status: done
     comment: |

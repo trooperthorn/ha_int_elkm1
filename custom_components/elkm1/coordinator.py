@@ -24,14 +24,8 @@ from .const import (
     ATTR_VALID,
     CONF_BAUD_RATE,
     CONF_CONNECTION_TYPE,
-    CONF_HOST,
-    CONF_PASSWORD,
     CONF_PIN,
-    CONF_PORT,
     CONF_SERIAL_PORT,
-    CONF_USERNAME,
-    CONNECTION_NETWORK,
-    CONNECTION_SERIAL,
     COORDINATOR_UPDATE_INTERVAL,
     DOMAIN,
     EVENT_ELKM1_KEYPAD_KEY_PRESSED,
@@ -42,7 +36,7 @@ from .event_log import describe_elk_event
 from .helpers.elk import Elk
 from .helpers.elk.const import ArmedStatus, ArmLevel
 from .helpers.elk.message import as_encode, az_encode, cs_encode, lw_encode, ss_encode
-from .helpers.transport import DEFAULT_HEARTBEAT_TIMEOUT, HEARTBEAT_MARGIN, ElkConnectionManager
+from .helpers.transport import ElkConnectionManager
 from .helpers.troublestatus import (
     normalize_trouble_status,
     parse_trouble_details,
@@ -141,33 +135,11 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         }
 
     def _build_connection_url(self) -> str:
-        """Build connection URL based on connection type."""
-        if self._connection_type == CONNECTION_SERIAL:
-            serial_port = self._config_data.get(CONF_SERIAL_PORT)
-            if not serial_port:
-                raise ValueError("Serial port not configured")
-            return f"serial://{serial_port}"
-
-        if self._connection_type == CONNECTION_NETWORK:
-            host = self._config_data.get(CONF_HOST)
-            if not host:
-                raise ValueError("Host not configured")
-            if "://" in host:
-                # The config_flow URL is already scheme-prefixed; do not re-wrap it.
-                return str(host)
-            port = self._config_data.get(CONF_PORT, 2101)
-            return f"elk://{host}:{port}"
-
-        raise ValueError(f"Unknown connection type: {self._connection_type}")
-
-    def _obfuscated_url(self) -> str:
-        """Return connection URL with sensitive data obfuscated for logging."""
-        if self._connection_type == CONNECTION_SERIAL:
-            return self._url
-        if "://" in self._url:
-            scheme = self._url.split("://", 1)[0]
-            return f"{scheme}://<redacted>"
-        return "<redacted>"
+        """Build the serial connection URL."""
+        serial_port = self._config_data.get(CONF_SERIAL_PORT)
+        if not serial_port:
+            raise ValueError("Serial port not configured")
+        return f"serial://{serial_port}"
 
     @staticmethod
     def _get_enum_value(obj: Any, default: int = 0) -> int:
@@ -176,25 +148,11 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
 
     async def _async_setup(self) -> None:
         """One-time connection setup, run once before the first refresh."""
-        config: dict[str, Any] = {"url": self._url}
-        if self._connection_type == CONNECTION_NETWORK:
-            if username := self._config_data.get(CONF_USERNAME, ""):
-                config["userid"] = username
-            if password := self._config_data.get(CONF_PASSWORD, ""):
-                config["password"] = password
-
-        elk = Elk(config)
+        elk = Elk({"url": self._url})
         manager = ElkConnectionManager(
             elk,
             cached_baud=self._config_data.get(CONF_BAUD_RATE),
             on_baud_detected=self._on_baud_detected,
-            # The heartbeat window must exceed the poll interval; see docs/protocol.md.
-            heartbeat_timeout=max(
-                DEFAULT_HEARTBEAT_TIMEOUT,
-                self.update_interval.total_seconds() + HEARTBEAT_MARGIN
-                if self.update_interval
-                else DEFAULT_HEARTBEAT_TIMEOUT,
-            ),
         )
         self._connection_manager = manager
 
@@ -269,7 +227,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         if succeeded_task not in done:
             await manager.async_stop()
             self._elk = None
-            raise UpdateFailed(f"Timed out connecting to Elk-M1 at {self._obfuscated_url()}")
+            raise UpdateFailed(f"Timed out connecting to Elk-M1 at {self._url}")
 
         self._register_push_callbacks()
 
