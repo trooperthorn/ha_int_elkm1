@@ -130,7 +130,8 @@ jobs:
           VERSION="$(python3 scripts/set_version.py --next-from-tags)"
           git config user.name "$BOT_NAME"
           git config user.email "$BOT_EMAIL"
-          git add -- custom_components/elkm1/manifest.json
+          # Stage every version field the manifest names, not only the integration's.
+          git add -- $(python3 -c "import json; print(' '.join(f['path'] for f in json.load(open('.release.json'))['version_fields']))")
           git commit -m "Release v${VERSION}"
 
           if [ -z "$REMOTE_SHA" ]; then
