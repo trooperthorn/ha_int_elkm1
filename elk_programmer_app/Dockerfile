@@ -23,7 +23,11 @@ LABEL \
 # apk upgrade pulls Alpine fixes published after the base digest; tempio is a Go
 # binary the base ships that this app never runs, and it is what the image scan
 # flags, so it is removed.
-RUN set -eu; \n  apk upgrade --no-cache; \n  apk add --no-cache python3 py3-pip; \n  rm -f /usr/bin/tempio; \n  python3 -m venv /opt/elk; \
+RUN set -eu; \
+  apk upgrade --no-cache; \
+  apk add --no-cache python3 py3-pip; \
+  rm -f /usr/bin/tempio; \
+  python3 -m venv /opt/elk; \
   if [ "$ELK_PROGRAMMER_SOURCE" = "release" ]; then \
     NORMALIZED="$(printf '%s' "$BUILD_VERSION" | sed -E 's/\.0+([0-9])/.\1/g')"; \
     WHEEL="elk_programmer-${NORMALIZED}-py3-none-any.whl"; \
