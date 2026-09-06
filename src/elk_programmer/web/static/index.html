@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elk Programmer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#e9ecef;--panel:#f7f8f9;--ink:#1a222b;--muted:#5b6873;--rule:#c8d0d7;--accent:#0f5c7a;--accent-ink:#fff;
+  --ok:#2c7a4b;--warn:#a05d0b;--bad:#9b3428;--ok-bg:#dff1e6;--warn-bg:#fbeedb;--bad-bg:#f6e1dd;--code:#e1e6ea;
+  --sidebar:#1f2a33;--sidebar-ink:#d6dee5;--sidebar-active:#0f5c7a;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#141a20;--panel:#1c242c;--ink:#dbe2e8;--muted:#95a3ae;--rule:#33414c;--accent:#63b0d0;--accent-ink:#0f1a22;
+  --ok:#7ccba4;--warn:#e6b467;--bad:#e39a8c;--ok-bg:#1d3a2e;--warn-bg:#3d2d13;--bad-bg:#40231e;--code:#242f38;
+  --sidebar:#0f151a;--sidebar-ink:#b7c3cc;--sidebar-active:#1f5f7a;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "IBM Plex Sans",system-ui,sans-serif;height:100vh;display:grid;grid-template-columns:230px 1fr;grid-template-rows:auto 1fr auto}
+header{grid-column:1/3;display:flex;align-items:center;gap:1rem;padding:.5rem 1rem;background:var(--sidebar);color:var(--sidebar-ink);border-bottom:1px solid #000}
+header h1{font-size:1rem;font-weight:600;margin:0;letter-spacing:.02em}
+header .acct{font-family:"IBM Plex Mono",monospace;font-size:.85rem;opacity:.9}
+header .spacer{flex:1}
+nav{background:var(--sidebar);color:var(--sidebar-ink);overflow:auto;padding:.5rem 0}
+nav .group{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;opacity:.6;padding:.7rem 1rem .3rem}
+nav button{display:flex;justify-content:space-between;width:100%;text-align:left;background:none;border:0;color:inherit;padding:.4rem 1rem;font:inherit;cursor:pointer}
+nav button:hover{background:rgba(255,255,255,.06)}
+nav button.active{background:var(--sidebar-active);color:#fff}
+nav button .n{font-family:"IBM Plex Mono",monospace;font-size:.75rem;opacity:.7}
+main{overflow:auto;padding:1rem 1.25rem;display:grid;grid-template-columns:260px 1fr;gap:1rem;align-content:start}
+main.single{grid-template-columns:1fr}
+.list{background:var(--panel);border:1px solid var(--rule);max-height:calc(100vh - 140px);overflow:auto}
+.list .row{display:flex;gap:.5rem;padding:.35rem .6rem;border-bottom:1px solid var(--rule);cursor:pointer;font-size:.9rem}
+.list .row:hover{background:var(--code)}
+.list .row.active{background:var(--accent);color:var(--accent-ink)}
+.list .row .num{font-family:"IBM Plex Mono",monospace;width:3ch;opacity:.7}
+.list .toolbar{display:flex;gap:.4rem;padding:.4rem .6rem;border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--panel)}
+.card{background:var(--panel);border:1px solid var(--rule);padding:1rem 1.25rem}
+.card h2{margin:0 0 .75rem;font-size:1.05rem;font-weight:600}
+.form{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:.75rem 1.5rem}
+.field{display:flex;flex-direction:column;gap:.2rem}
+.field label{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.field .bits{display:grid;gap:.15rem .75rem;grid-template-columns:1fr 1fr;padding:.3rem .5rem;border:1px solid var(--rule)}
+.field .bits label{text-transform:none;letter-spacing:0;font-size:.85rem;color:var(--ink);display:flex;gap:.4rem;align-items:center}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--rule);padding:.3rem .45rem;border-radius:2px}
+input.mono,.mono{font-family:"IBM Plex Mono",monospace}
+.field:has(.voice){grid-column:1/-1}
+.voice{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.3rem}
+.actions{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1rem;align-items:center}
+button.btn{font:inherit;padding:.4rem .8rem;border:1px solid var(--rule);background:var(--panel);color:var(--ink);cursor:pointer;border-radius:2px}
+button.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.btn.danger{border-color:var(--bad);color:var(--bad)}
+button.btn:disabled{opacity:.5;cursor:default}
+.hex{font-family:"IBM Plex Mono",monospace;font-size:.8rem;background:var(--code);padding:.5rem;white-space:pre-wrap;word-break:break-all;margin-top:.75rem}
+.tag{display:inline-block;font-size:.72rem;font-weight:600;padding:.05rem .45rem;border-radius:2px;letter-spacing:.03em}
+.tag.ok{background:var(--ok-bg);color:var(--ok)}.tag.warn{background:var(--warn-bg);color:var(--warn)}.tag.bad{background:var(--bad-bg);color:var(--bad)}
+.note{color:var(--muted);font-size:.85rem;margin:.4rem 0}
+footer{grid-column:1/3;border-top:1px solid var(--rule);background:var(--panel);display:grid;grid-template-columns:1fr 1fr;max-height:200px}
+footer .pane{padding:.4rem .75rem;overflow:auto;font-family:"IBM Plex Mono",monospace;font-size:.75rem}
+footer .pane h3{font:600 .7rem "IBM Plex Sans",sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 .3rem}
+footer .pane:first-child{border-right:1px solid var(--rule)}
+.tx{color:var(--accent)}.rx{color:var(--ok)}
+.status{display:flex;gap:.75rem;align-items:center}
+dialog{border:1px solid var(--rule);background:var(--panel);color:var(--ink);padding:1.25rem;max-width:520px}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1>Elk Programmer</h1>
+  <span class="acct" id="acctName">no account</span>
+  <span class="spacer"></span>
+  <span class="status" id="panelStatus"><span class="tag bad">Offline</span></span>
+  <span class="acct" id="who"></span>
+  <button class="btn" id="btnWrites" title="Enable writes for this session">Enable writes</button>
+  <button class="btn" id="btnConnect">Connect</button>
+</header>
+
+<nav id="nav"></nav>
+
+<main id="main">
+  <div class="list" id="list"></div>
+  <div class="card" id="editor"><p class="note">Pick a table on the left.</p></div>
+</main>
+
+<footer>
+  <div class="pane"><h3>Messages</h3><div id="log"></div></div>
+  <div class="pane"><h3>Panel trace</h3><div id="trace"></div></div>
+</footer>
+
+<dialog id="dlgConnect">
+  <h2 style="margin-top:0">Connect to panel</h2>
+  <div class="form">
+    <div class="field"><label>Method</label><select id="cMethod"><option value="network">Network (M1XEP, non-secure port)</option><option value="serial">Serial (RS-232)</option></select></div>
+    <div class="field"><label>Host</label><input id="cHost" placeholder="192.0.2.10"></div>
+    <div class="field"><label>Port</label><input id="cPort" value="2101"></div>
+    <div class="field"><label>Serial port</label><input id="cSerial" placeholder="COM3"></div>
+    <div class="field"><label>Baud</label><input id="cBaud" value="115200"></div>
+    <div class="field"><label>RP access code</label><input id="cCode" type="password" class="mono" maxlength="6" autocomplete="off"></div>
+  </div>
+  <p class="note">The RP access code is sent once for login and never stored. The session speaks the RP protocol reconstructed from ElkRP; it has not yet been verified against a live panel, so the first connection should be to a bench panel.</p>
+  <div class="actions"><button class="btn primary" id="cGo">Log in</button><button class="btn" id="cCancel">Cancel</button></div>
+</dialog>
+
+<dialog id="dlgSetup">
+  <h2 style="margin-top:0">Set the app passphrase</h2>
+  <p class="note">No passphrase is set yet. This passphrase gates every read of the panel programming, which includes user PINs. It is stored only as a hash under the app data; there is no recovery from inside Home Assistant.</p>
+  <div class="form"><div class="field"><label>Passphrase (12 or more characters)</label><input id="sPass" type="password" autocomplete="new-password"></div><div class="field"><label>Again</label><input id="sPass2" type="password" autocomplete="new-password"></div></div>
+  <div class="actions"><button class="btn primary" id="sGo">Set passphrase</button></div>
+</dialog>
+
+<dialog id="dlgLogin">
+  <h2 style="margin-top:0">Elk Programmer</h2>
+  <p class="note">Enter the app passphrase to open the programmer as <span class="mono" id="loginWho"></span>.</p>
+  <div class="form"><div class="field"><label>Passphrase</label><input id="lPass" type="password" autocomplete="current-password"></div></div>
+  <div class="actions"><button class="btn primary" id="lGo">Open</button></div>
+</dialog>
+
+<dialog id="dlgStepUp">
+  <h2 style="margin-top:0">Enable writes</h2>
+  <p class="note">Writing to the panel needs the passphrase again. Writes stay enabled for 15 minutes of activity. The panel's RP access code is still required to open a session.</p>
+  <div class="form"><div class="field"><label>Passphrase</label><input id="uPass" type="password" autocomplete="current-password"></div></div>
+  <div class="actions"><button class="btn primary" id="uGo">Enable</button><button class="btn" id="uCancel">Cancel</button></div>
+</dialog>
+
+<dialog id="dlgImport">
+  <h2 style="margin-top:0">Import from ElkRP database</h2>
+  <div class="form">
+    <div class="field"><label>Database file</label><input id="iPath" value="C:\ProgramData\RP\ElkAccts2.mdb"></div>
+    <div class="field"><label>Database password</label><input id="iPass" type="password" autocomplete="off"></div>
+    <div class="field"><label>Account</label><select id="iAccount"><option value="">list accounts first</option></select></div>
+  </div>
+  <p class="note">The password is the one ElkRP itself uses to open its Jet database; it is used once and not kept. Read only.</p>
+  <div class="actions"><button class="btn" id="iList">List accounts</button><button class="btn primary" id="iGo" disabled>Import</button><button class="btn" id="iCancel">Cancel</button></div>
+</dialog>
+
+<script>
+const $=s=>document.querySelector(s);
+const rel=p=>p.replace(/^\//,'');
+const api=async(path,opt={})=>{const r=await fetch(rel(path),{headers:{'content-type':'application/json'},...opt,body:opt.body?JSON.stringify(opt.body):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||r.statusText);return j};
+const log=(msg,cls='')=>{const d=document.createElement('div');d.textContent=`${new Date().toLocaleTimeString()}  ${msg}`;if(cls)d.className=cls;$('#log').prepend(d)};
+let SPECS=[],WORDS=[],current=null,currentNumber=null,record=null,account=null,AUTH={mode:'standalone'};
+
+async function boot(){
+  AUTH=await api('/api/auth/status');if(AUTH.mode==='app'){$('#who').textContent=AUTH.user_name||AUTH.user_id;if(!AUTH.set_up){$('#dlgSetup').showModal();return}if(!AUTH.logged_in){$('#dlgLogin').showModal();return}}
+  SPECS=await api('/api/specs');WORDS=await api('/api/vocab/words');
+  await refreshAccount();buildNav();showAccount();pollStatus();openTrace();
+}
+async function refreshAccount(){account=await api('/api/account');$('#acctName').textContent=account.name+(account.file?`  [${account.file}]`:'  [unsaved]')}
+function buildNav(){
+  const nav=$('#nav');nav.innerHTML='';
+  const add=(label,id,n)=>{const b=document.createElement('button');b.innerHTML=`<span>${label}</span>${n!==undefined?`<span class="n">${n}</span>`:''}`;b.dataset.view=id;b.onclick=()=>{[...nav.querySelectorAll('button')].forEach(x=>x.classList.remove('active'));b.classList.add('active');route(id)};nav.appendChild(b)};
+  const group=t=>{const d=document.createElement('div');d.className='group';d.textContent=t;nav.appendChild(d)};
+  group('Account');add('Account and connection','account');add('Import from ElkRP','import');
+  group('Programming');for(const s of SPECS)add(s.label,'table:'+s.name,account.counts[s.name]);
+  group('Panel');add('Live panel tools','panel');
+}
+function route(id){
+  if(id==='account')return showAccount();
+  if(id==='import')return $('#dlgImport').showModal();
+  if(id==='panel')return showPanel();
+  if(id.startsWith('table:'))return showTable(SPECS.find(s=>s.name===id.slice(6)));
+}
+function showAccount(){
+  $('#main').classList.add('single');$('#list').classList.add('hidden');
+  const c=account.connection,i=account.identity;
+  $('#editor').innerHTML=`<h2>Account</h2><div class="form">
+   <div class="field"><label>Name</label><input id="aName" value="${esc(account.name)}"></div>
+   <div class="field"><label>Panel</label><input value="${esc(i.control_type)} ${esc(i.software_version)} serial ${esc(i.serial_number)}" disabled></div>
+   <div class="field"><label>Connection method</label><select id="aMethod"><option value="network"${c.method==='network'?' selected':''}>Network</option><option value="serial"${c.method==='serial'?' selected':''}>Serial</option></select></div>
+   <div class="field"><label>Host</label><input id="aHost" value="${esc(c.host)}"></div>
+   <div class="field"><label>Port</label><input id="aPort" value="${c.port}"></div>
+   <div class="field"><label>Serial port</label><input id="aSerial" value="${esc(c.serial_port)}"></div>
+   <div class="field"><label>Baud</label><input id="aBaud" value="${c.baud}"></div>
+   <div class="field" style="grid-column:1/-1"><label>Notes</label><textarea id="aNotes" rows="3">${esc(account.notes)}</textarea></div></div>
+   <div class="actions"><button class="btn primary" id="aSave">Apply</button><button class="btn" id="aNew">New account</button><button class="btn" id="aOpen">Open file</button><button class="btn" id="aSaveFile">Save to file</button></div>
+   <p class="note">Account files live in <span class="mono" id="aDir"></span>. Secrets are never written to them.</p>`;
+  $('#aSave').onclick=async()=>{await api('/api/account',{method:'PUT',body:{name:$('#aName').value,notes:$('#aNotes').value,connection:{method:$('#aMethod').value,host:$('#aHost').value,port:+$('#aPort').value,serial_port:$('#aSerial').value,baud:+$('#aBaud').value}}});await refreshAccount();log('Account updated')};
+  $('#aNew').onclick=async()=>{const n=prompt('Account name');if(!n)return;await api('/api/accounts/new',{method:'POST',body:{name:n}});await refreshAccount();buildNav();showAccount()};
+  $('#aSaveFile').onclick=async()=>{const n=account.file||prompt('File name',account.name);if(!n)return;const r=await api('/api/accounts/save',{method:'POST',body:{name:n}});await refreshAccount();log('Saved '+r.file)};
+  $('#aOpen').onclick=async()=>{const l=await api('/api/accounts');const n=prompt('Open which file?\n'+l.files.join('\n'),l.files[0]||'');if(!n)return;await api('/api/accounts/open/'+encodeURIComponent(n));await refreshAccount();buildNav();showAccount();log('Opened '+n)};
+  api('/api/accounts').then(l=>{$('#aDir').textContent=l.directory});
+}
+async function showTable(spec){
+  current=spec;$('#main').classList.remove('single');$('#list').classList.remove('hidden');
+  const l=await api('/api/records/'+spec.name);
+  const list=$('#list');list.innerHTML=`<div class="toolbar"><button class="btn" id="lAdd">Add</button><span class="note">${l.items.length} of ${spec.count}</span></div>`;
+  for(const it of l.items){const r=document.createElement('div');r.className='row';r.innerHTML=`<span class="num">${it.number}</span><span>${esc(it.title)||'<i>(unnamed)</i>'}</span>`;r.onclick=()=>{[...list.querySelectorAll('.row')].forEach(x=>x.classList.remove('active'));r.classList.add('active');openRecord(spec,it.number)};list.appendChild(r)}
+  $('#lAdd').onclick=()=>{const n=+prompt(`${spec.label}: number (${spec.first}-${spec.count})`);if(!n||n<spec.first||n>spec.count)return;openRecord(spec,n).then(()=>showTable(spec))};
+  $('#editor').innerHTML=`<h2>${spec.label}</h2><p class="note">${spec.table}, ${spec.size} bytes per record${spec.wire?`, wire opcode 0x${spec.wire.opcode.toString(16).padStart(2,'0')}`:''}.</p>${spec.unmapped_reason?`<p class="note"><span class="tag warn">Not sendable yet</span> ${esc(spec.unmapped_reason)}</p>`:''}<p class="note">Select a record.</p>`;
+  if(l.items.length)list.querySelector('.row').click();
+}
+async function openRecord(spec,number){
+  currentNumber=number;const r=await api(`/api/records/${spec.name}/${number}`);record=r.record;
+  const ed=$('#editor');ed.innerHTML=`<h2>${spec.label} ${number}</h2>`;
+  const form=document.createElement('div');form.className='form';
+  for(const f of [...spec.fields,...spec.extra]){if(f.hidden)continue;form.appendChild(fieldEditor(f))}
+  ed.appendChild(form);
+  const act=document.createElement('div');act.className='actions';
+  act.innerHTML=`<button class="btn primary" id="rSave">Apply</button><button class="btn" id="rBytes">Show bytes</button><button class="btn" id="rRead">Read from panel</button><button class="btn" id="rVerify">Verify CRC</button><button class="btn" id="rPreview">Preview send</button><button class="btn danger" id="rSend">Send to panel</button><button class="btn" id="rDel">Remove</button>`;
+  ed.appendChild(act);
+  const hex=document.createElement('div');hex.className='hex';hex.textContent=r.hex;ed.appendChild(hex);
+  const wired=!!spec.wire;$('#rRead').disabled=$('#rVerify').disabled=$('#rPreview').disabled=$('#rSend').disabled=!wired;
+  $('#rVerify').onclick=async()=>{try{const v=await api('/api/panel/verify',{method:'POST',body:{spec:spec.name,number}});log(`${spec.label} ${number}: panel CRC ${v.panel_crc}, local CRC ${v.local_crc}, ${v.match?'match':'DIFFER'}`,v.match?'ok':'bad')}catch(e){log('Verify failed: '+e.message,'bad')}};
+  $('#rSave').onclick=async()=>{const res=await api(`/api/records/${spec.name}/${number}`,{method:'PUT',body:record});hex.textContent=res.hex;log(`${spec.label} ${number} applied`)};
+  $('#rBytes').onclick=async()=>{const res=await api(`/api/records/${spec.name}/${number}`);hex.textContent=res.hex};
+  $('#rDel').onclick=async()=>{if(!confirm('Remove this record from the account file?'))return;await api(`/api/records/${spec.name}/${number}`,{method:'DELETE'});showTable(spec)};
+  $('#rRead').onclick=async()=>{try{const res=await api('/api/panel/read',{method:'POST',body:{spec:spec.name,number}});hex.textContent='panel: '+res.hex;const d=Object.keys(res.diff);log(d.length?`${spec.label} ${number}: panel differs in ${d.join(', ')}`:`${spec.label} ${number}: panel matches local`);if(d.length&&confirm('Replace the local record with the panel copy?')){await api(`/api/records/${spec.name}/${number}`,{method:'PUT',body:res.record});openRecord(spec,number)}}catch(e){log('Read failed: '+e.message,'bad')}};
+  $('#rPreview').onclick=async()=>{await $('#rSave').onclick();const res=await api('/api/panel/write',{method:'POST',body:{spec:spec.name,number,dry_run:true}});hex.textContent='would send frame:\n'+res.frame;log('Preview shown; nothing sent')};
+  $('#rSend').onclick=async()=>{await $('#rSave').onclick();const res=await api('/api/panel/write',{method:'POST',body:{spec:spec.name,number,dry_run:true}});if(!confirm(`Send ${spec.label} ${number} to the panel?\n\n${res.frame}`))return;try{const w=await api('/api/panel/write',{method:'POST',body:{spec:spec.name,number,dry_run:false}});hex.textContent='sent:\n'+w.frame+'\nreply:\n'+w.reply;log(`${spec.label} ${number} sent`,'ok')}catch(e){log('Send failed: '+e.message,'bad')}};
+}
+function fieldEditor(f){
+  const d=document.createElement('div');d.className='field';const lab=document.createElement('label');lab.textContent=f.label;d.appendChild(lab);
+  if(f.kind==='u8'&&f.bits.length){
+    const box=document.createElement('div');box.className='bits';
+    for(const b of f.bits){const l=document.createElement('label');
+      if(b.width===1){const c=document.createElement('input');c.type='checkbox';c.checked=!!((record[f.name]>>b.lsb)&1);c.onchange=()=>{const m=1<<b.lsb;record[f.name]=c.checked?(record[f.name]|m):(record[f.name]&~m)};l.append(c,b.label||b.name)}
+      else{const s=document.createElement('select');const mask=(1<<b.width)-1;for(let v=0;v<=mask;v++){const o=document.createElement('option');o.value=v;o.textContent=b.choices[v]!==undefined?b.choices[v]:String(v);s.appendChild(o)}s.value=(record[f.name]>>b.lsb)&mask;s.onchange=()=>{record[f.name]=(record[f.name]&~(mask<<b.lsb))|((+s.value&mask)<<b.lsb)};l.append(b.label||b.name,s)}
+      box.appendChild(l)}
+    d.appendChild(box);return d}
+  if(f.kind==='u8'&&f.choices.length){const s=document.createElement('select');f.choices.forEach((c,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${i}: ${c}`;s.appendChild(o)});s.value=record[f.name];s.onchange=()=>record[f.name]=+s.value;d.appendChild(s);return d}
+  if(f.kind==='u8'||f.kind==='u16'){const i=document.createElement('input');i.type='number';i.min=f.minimum;i.max=f.kind==='u16'?65535:f.maximum;i.value=record[f.name];i.className='mono';i.onchange=()=>record[f.name]=+i.value;d.appendChild(i);return d}
+  if(f.kind==='voice'){const v=document.createElement('div');v.className='voice';for(let k=0;k<f.length;k++){const s=document.createElement('select');const o0=document.createElement('option');o0.value=0;o0.textContent='(none)';s.appendChild(o0);for(const w of WORDS){const o=document.createElement('option');o.value=w.id;o.textContent=w.text;s.appendChild(o)}s.value=record[f.name][k];s.onchange=()=>record[f.name][k]=+s.value;v.appendChild(s)}d.appendChild(v);return d}
+  const i=document.createElement('input');i.value=record[f.name]??'';i.maxLength=f.length;if(f.kind!=='text')i.className='mono';if(f.kind==='code')i.type='password';i.onchange=()=>record[f.name]=i.value;d.appendChild(i);return d;
+}
+function showPanel(){
+  $('#main').classList.add('single');$('#list').classList.add('hidden');
+  $('#editor').innerHTML=`<h2>Live panel tools</h2><p class="note">These operate on the connected panel. Reads are safe. Writes are previewed as exact frames and require confirmation.</p>
+   <div class="actions"><button class="btn primary" id="pReceive">Receive all from panel</button><button class="btn" id="pStatus">Refresh status</button><button class="btn" id="pTrace">Dump trace</button><button class="btn danger" id="pDisc">Disconnect</button></div>
+   <p class="note" id="pProgress">Receive reads every mapped table item by item and replaces the local copy; unanswered items are listed, not treated as errors.</p><div class="hex" id="pOut"></div>`;
+  $('#pReceive').onclick=async()=>{if(!confirm('Read every mapped table from the panel into the open account? Local edits to those tables are replaced.'))return;try{await api('/api/panel/receive',{method:'POST',body:{}});log('Receive started')}catch(e){log('Receive failed: '+e.message,'bad')}};
+  $('#pStatus').onclick=async()=>{$('#pOut').textContent=JSON.stringify(await api('/api/panel/status'),null,1)};
+  $('#pTrace').onclick=async()=>{const t=await api('/api/panel/trace');$('#pOut').textContent=t.map(x=>`${x.when} ${x.direction} ${x.hex}  ${x.note}`).join('\n')||'(empty)'};
+  $('#pDisc').onclick=async()=>{await api('/api/panel/disconnect',{method:'POST'});log('Disconnected');pollStatus()};
+}
+async function pollStatus(){try{const s=await api('/api/panel/status');$('#panelStatus').innerHTML=s.connected?`<span class="tag ok">Online</span> <span class="mono">${esc(s.login.firmware)} sn ${esc(s.login.serial_number)}</span>`:`<span class="tag bad">Offline</span>`;$('#btnConnect').textContent=s.connected?'Disconnect':'Connect'}catch(e){}}
+$('#btnConnect').onclick=async()=>{const s=await api('/api/panel/status');if(s.connected){await api('/api/panel/disconnect',{method:'POST'});log('Disconnected');return pollStatus()}const c=account.connection;$('#cMethod').value=c.method;$('#cHost').value=c.host;$('#cPort').value=c.port;$('#cSerial').value=c.serial_port;$('#cBaud').value=c.baud;$('#dlgConnect').showModal()};
+$('#cCancel').onclick=()=>$('#dlgConnect').close();
+$('#cGo').onclick=async()=>{try{const r=await api('/api/panel/connect',{method:'POST',body:{method:$('#cMethod').value,host:$('#cHost').value,port:+$('#cPort').value,serial_port:$('#cSerial').value,baud:+$('#cBaud').value,rp_code:$('#cCode').value}});$('#cCode').value='';$('#dlgConnect').close();log(`Logged in: firmware ${r.login.firmware}, serial ${r.login.serial_number}`,'ok');pollStatus()}catch(e){log('Connect failed: '+e.message,'bad')}};
+$('#iCancel').onclick=()=>$('#dlgImport').close();
+$('#iList').onclick=async()=>{try{const r=await api('/api/import/mdb',{method:'POST',body:{path:$('#iPath').value,password:$('#iPass').value}});const s=$('#iAccount');s.innerHTML='';for(const a of r.accounts){const o=document.createElement('option');o.value=a.Account;o.textContent=`${a.Account}: ${a.Name} (${a.ControlType})`;s.appendChild(o)}$('#iGo').disabled=!r.accounts.length;log(`${r.accounts.length} account(s) in database`)}catch(e){log('Import failed: '+e.message,'bad')}};
+$('#iGo').onclick=async()=>{try{await api('/api/import/mdb',{method:'POST',body:{path:$('#iPath').value,password:$('#iPass').value,account_id:+$('#iAccount').value}});$('#iPass').value='';$('#dlgImport').close();await refreshAccount();buildNav();showAccount();log('Imported '+account.name,'ok')}catch(e){log('Import failed: '+e.message,'bad')}};
+$('#sGo').onclick=async()=>{if($('#sPass').value!==$('#sPass2').value)return log('Passphrases differ','bad');try{await api('/api/auth/setup',{method:'POST',body:{passphrase:$('#sPass').value}});$('#sPass').value=$('#sPass2').value='';$('#dlgSetup').close();location.reload()}catch(e){log('Setup failed: '+e.message,'bad')}};
+$('#lGo').onclick=async()=>{try{await api('/api/auth/login',{method:'POST',body:{passphrase:$('#lPass').value}});$('#lPass').value='';$('#dlgLogin').close();location.reload()}catch(e){log('Login failed: '+e.message,'bad')}};
+$('#uGo').onclick=async()=>{try{await api('/api/auth/step_up',{method:'POST',body:{passphrase:$('#uPass').value}});$('#uPass').value='';$('#dlgStepUp').close();log('Writes enabled for this session','ok');refreshWriteState()}catch(e){log('Enable writes failed: '+e.message,'bad')}};
+$('#uCancel').onclick=()=>$('#dlgStepUp').close();
+$('#btnWrites').onclick=()=>{if(AUTH.mode!=='app'){return log(AUTH.read_only?'The service is configured read only':'Standalone mode: writes are always enabled on localhost')}$('#dlgStepUp').showModal()};
+async function refreshWriteState(){try{AUTH=await api('/api/auth/status');const b=$('#btnWrites');b.textContent=AUTH.read_only?'Read only':(AUTH.can_write?'Writes enabled':'Enable writes');b.disabled=!!AUTH.read_only;$('#loginWho').textContent=AUTH.user_name||AUTH.user_id}catch(e){}}
+function openTrace(){try{const base=location.pathname.endsWith('/')?location.pathname:location.pathname+'/';const ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+base+'ws/trace');ws.onmessage=ev=>{const t=JSON.parse(ev.data);if(t.kind==='progress'){const p=$('#pProgress');if(p)p.textContent=`${t.message}  (${t.item}/${t.total} in ${t.table})`;return}if(t.kind==='receive_done'){log(`Receive done: read ${JSON.stringify(t.read)}; changed ${JSON.stringify(t.changed)}; unanswered ${Object.values(t.unanswered).reduce((a,b)=>a+b.length,0)} items${t.errors.length?'; errors: '+t.errors.join(' | '):''}`,'ok');refreshAccount().then(buildNav);return}const d=document.createElement('div');d.className=t.direction;d.textContent=`${t.direction} ${t.hex}  ${t.note}`;$('#trace').prepend(d);if($('#trace').childElementCount>400)$('#trace').lastChild.remove()};ws.onclose=()=>setTimeout(openTrace,3000)}catch(e){}}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+setInterval(pollStatus,10000);setInterval(refreshWriteState,60000);refreshWriteState();boot().catch(e=>log('Startup failed: '+e.message,'bad'));
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+configuration:
+  host:
+    name: Panel address
+    description: The M1XEP address reachable from this host.
+  port:
+    name: Panel port
+    description: The XEP port for the programming session; 2101 is the non-secure port.
+  allowed_users:
+    name: Allowed Home Assistant user ids
+    description: Only these user ids may open the app. Everyone else is refused, including admins.
+  idle_minutes:
+    name: Idle stop
+    description: Minutes without a request before the app stops itself.
+  read_only:
+    name: Read only
+    description: Refuse every write to the panel. Keep on until the first live session is reviewed.

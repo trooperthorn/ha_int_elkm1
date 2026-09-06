@@ -1,3 +1,38 @@
+[build-system]
+requires = ["setuptools>=75"]
+backend-path = []
+build-backend = "setuptools.build_meta"
+
+# The elk-programmer service (src/elk_programmer) is the installer programming
+# tool that elk_programmer_app packages. The integration in custom_components
+# is distributed by HACS and is not part of this package. See docs/programmer/.
+[project]
+name = "elk-programmer"
+version = "2026.09.06.1"
+description = "Installer programming application for Elk-M1 Gold panels, a replacement for ElkRP"
+requires-python = ">=3.14"
+license = "MIT"
+dependencies = [
+  "fastapi>=0.141",
+  "uvicorn[standard]>=0.40",
+  "serialx>=1.9.0",
+  "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+mdb = ["pyodbc>=5.3"]
+dev = ["pytest>=9", "pytest-asyncio", "ruff", "mypy"]
+
+[project.scripts]
+elk-programmer = "elk_programmer.web.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"elk_programmer.data" = ["*.csv"]
+"elk_programmer.web.static" = ["*.html"]
+
 [tool.ruff]
 target-version = "py314"
 line-length = 100
@@ -29,8 +64,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["custom_components.elkm1"]
+known-first-party = ["custom_components.elkm1", "elk_programmer"]
 combine-as-imports = true
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["RET504"]
+"tests_programmer/*" = ["RET504"]

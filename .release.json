@@ -1,8 +1,11 @@
 {
   "tag_prefix": "v",
   "timezone": "America/Chicago",
-  "release_paths": ["custom_components/elkm1"],
+  "release_paths": ["custom_components/elkm1", "elk_programmer_app", "src/elk_programmer"],
   "version_fields": [
-    {"path": "custom_components/elkm1/manifest.json", "kind": "json", "key": "version"}
+    {"path": "custom_components/elkm1/manifest.json", "kind": "json", "key": "version"},
+    {"path": "elk_programmer_app/config.yaml", "kind": "regex", "pattern": "^version:\\s*\"([^\"]+)\"", "template": "version: \"{version}\""},
+    {"path": "pyproject.toml", "kind": "regex", "pattern": "^version = \"([^\"]+)\"", "template": "version = \"{version}\""},
+    {"path": "src/elk_programmer/__init__.py", "kind": "regex", "pattern": "^__version__ = \"([^\"]+)\"", "template": "__version__ = \"{version}\""}
   ]
 }
