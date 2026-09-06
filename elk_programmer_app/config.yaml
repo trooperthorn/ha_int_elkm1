@@ -41,4 +41,5 @@ schema:
   idle_minutes: int(1,120)
   read_only: bool
 
-image: "ghcr.io/trooperthorn/elk-programmer"
+# No image key: the Supervisor builds the container on the host from the
+# Dockerfile until a published image exists (docs/programmer/backlog.md).

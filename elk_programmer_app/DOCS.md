@@ -18,6 +18,12 @@ Nothing secret is an option. The app passphrase is set from the app's own
 page on first use and stored as a hash under the app's data. The panel's RP
 access code is entered when a session opens and is never stored.
 
+## Installing
+
+The app is built on the Home Assistant host from its Dockerfile the first
+time it is installed; expect a few minutes while the base image and the
+service's Python dependencies download. No pre-built image is published yet.
+
 ## Using it
 
 1. Start the app from its page. It does not start with Home Assistant.

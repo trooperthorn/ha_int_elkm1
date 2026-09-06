@@ -1,6 +1,5 @@
 [build-system]
 requires = ["setuptools>=75"]
-backend-path = []
 build-backend = "setuptools.build_meta"
 
 # The elk-programmer service (src/elk_programmer) is the installer programming
