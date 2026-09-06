@@ -471,3 +471,50 @@ rate and re-triggers the same DTR toggle, not just the first one. Rejected: leav
 undiagnosed since the restart "fixed" it - a five-minute mitigation that costs half a
 second per baud attempt is worth having even though the root cause can't be proven with
 certainty from a single field incident (see the "Unverified" note this leaves behind).
+
+## 2026-09-05, network/M1XEP connectivity removed entirely; PIN and password fields masked
+
+A security review of the config flow found the M1XEP network path defaulted new setups
+to TLS 1.0 (`"secure"`, the first and default option in `SECURE_PROTOCOLS`) - deprecated
+industry-wide since 2018, with no PCI-DSS compliant use left. Worse, every `elks*` scheme
+including the better-labeled "TLS 1.2" option ran `ssl_context.set_ciphers("DEFAULT:@SECLEVEL=0")`
+and set `OP_LEGACY_SERVER_CONNECT`, disabling OpenSSL's cipher-strength floor and allowing
+legacy insecure renegotiation for every connection regardless of chosen version - both
+apparently required just to interoperate with the M1XEP's own TLS stack, not something a
+user's protocol choice could opt out of. TLS 1.3 was implemented in code but never
+reachable through the config flow UI at all. Sean's decision, given serial/USB has no
+network attack surface whatsoever: remove network connectivity entirely rather than
+demote the default, since no user of this repository was known to be using it (confirmed
+before removal, not assumed) and a "make it safer but keep it" fix would still leave a
+weaker transport as a standing option for anyone who selected it anyway.
+
+Removed entirely: `discovery.py`, `helpers/elk/discovery.py` (UDP M1XEP discovery),
+`helpers/elk/util.py`'s `TLS_VERSIONS`/`ssl_context_for_scheme`/`url_scheme_is_secure`
+(that module is now nine lines - a single `serial://` URL parser), the config flow's
+network/manual-network/discovery-confirm/reauth steps and `validate_input`/
+`validate_network_connection`, `helpers/elk/hub.py`'s credential-send-on-connect branch,
+`helpers/elk/connection.py`'s `send_raw`/raw-write plumbing (only ever used to send
+network login credentials with no checksum), and the heartbeat supervisor (`_entry_heartbeat`,
+`Connection.heartbeat_event`/`heartbeat_timeout`, `DEFAULT_HEARTBEAT_TIMEOUT`/
+`HEARTBEAT_MARGIN`) - a network-only keepalive with no serial equivalent, since a broken
+serial/USB cable fails a read or write immediately rather than going silently half-open.
+`manifest.json` lost its `network` dependency and `dhcp` discovery trigger.
+`ConfigFlow.VERSION` moved to 3; `async_migrate_entry` now fails migration cleanly
+(returns `False`) for a network-shaped legacy entry instead of reinterpreting it, since
+there is no supported path forward for one.
+
+Rejected: keeping network connectivity behind a Repairs warning or a "legacy/insecure"
+label instead of deleting it, which was the initial, narrower plan (see the TLS 1.0
+settle-on-1.2 discussion above this entry) - superseded once Sean set the actual policy:
+serial-only, full stop, for security reasons, not TLS hygiene.
+
+While already investigating the PIN field for this review: `config_flow.py`'s PIN and
+password fields were plain `vol.Optional(..., default=...): str` schema entries, rendering
+as an ordinary visible text box - and the reconfigure form pre-filled the *current* stored
+PIN into that plaintext box by default every time it was reopened. Both now use a
+`selector.TextSelector` with `TextSelectorType.PASSWORD`, masking the field on screen
+without changing what is actually stored. This is unrelated to the config-stored PIN's
+role as an automation fallback when a service call omits `code` (see the earlier
+discussion this session, reflected in the README's new "PIN and password fields"
+section) - masking only changes whether the value is ever shown in the clear, not who
+can trigger an arm/disarm without typing it.

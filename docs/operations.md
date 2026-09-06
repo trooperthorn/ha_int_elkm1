@@ -21,8 +21,8 @@ bump that silently moves the core is caught. The harness imports
 `scripts/live_debug_check.py` runs the real integration - config entry setup,
 the coordinator, entity-registry forwarding, clean unload - against a real
 panel, for debugging a connectivity problem or as a release-qualification
-step. It is not part of the CI gate (it touches a real serial/network
-connection) and is read-only by design: no arm/disarm/output/bypass/write
+step. It is not part of the CI gate (it touches a real serial connection)
+and is read-only by design: no arm/disarm/output/bypass/write
 command is ever sent. Unlike the full pytest suite, only the harness's
 `common.py` helpers are needed, not `plugins.py` (which imports `fcntl`), so
 this one script runs natively on Windows against a COM port with no WSL
@@ -89,15 +89,12 @@ cannot approve their own PR and the automation must not need a bypass.
 
 ## Runtime knobs
 
-The options flow allows a poll interval up to 300 seconds. The network heartbeat window
-defaults to 120 seconds and is scaled to the poll interval plus 30 seconds so a long poll
-interval does not cause spurious reconnects (`protocol.md` has the reasoning). After
-connecting, the integration waits five seconds and then logs which Global Programming
-broadcast settings it has confirmed active; an "unconfirmed" setting may only mean that
-nothing of that type has changed yet, so check the panel before assuming it is off.
+The options flow allows a poll interval up to 300 seconds. After connecting, the
+integration waits five seconds and then logs which Global Programming broadcast settings
+it has confirmed active; an "unconfirmed" setting may only mean that nothing of that
+type has changed yet, so check the panel before assuming it is off.
 
-Diagnostics exports redact credentials (password, username, pin, code, userid) and network
-locators (host, serial port, MAC address).
+Diagnostics exports redact the pin and serial port (`diagnostics.py`'s `TO_REDACT`).
 
 ## Line endings
 

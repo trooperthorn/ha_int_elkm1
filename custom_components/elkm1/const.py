@@ -16,17 +16,11 @@ LOGIN_TIMEOUT = 20
 
 CONF_CONNECTION_TYPE = "connection_type"
 CONF_SERIAL_PORT = "serial_port"
-CONF_HOST = "host"
-CONF_PORT = "port"
-CONF_USERNAME = "username"
-CONF_PASSWORD = "password"
 CONF_PIN = "pin"
 CONF_BAUD_RATE = "baud_rate"
 CONF_DEVICE_ID = "device_id"
-CONF_MAC_ADDRESS = "mac_address"
 
 CONNECTION_SERIAL = "serial"
-CONNECTION_NETWORK = "network"
 
 COORDINATOR_UPDATE_INTERVAL = 30
 
@@ -45,9 +39,6 @@ CONF_SETTING = "setting"
 CONF_TASK = "task"
 CONF_THERMOSTAT = "thermostat"
 CONF_TEMPERATURE_UNIT = "temperature_unit"
-
-DISCOVER_SCAN_TIMEOUT = 10
-DISCOVERY_INTERVAL = timedelta(minutes=15)
 
 ELK_ELEMENTS = {
     CONF_AREA: 8,

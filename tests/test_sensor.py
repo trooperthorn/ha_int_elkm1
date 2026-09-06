@@ -286,7 +286,7 @@ def _make_zone(index: int, definition: ZoneType, name: str = "") -> Zone:
 
 
 async def test_setup_entry_only_creates_sensors_for_temperature_and_analog_zones(
-    hass, mock_network_entry
+    hass, mock_serial_entry
 ):
     temp_zone = _make_zone(0, ZoneType.TEMPERATURE, "Attic Temp")
     analog_zone = _make_zone(1, ZoneType.ANALOG_ZONE, "Well Voltage")
@@ -296,10 +296,10 @@ async def test_setup_entry_only_creates_sensors_for_temperature_and_analog_zones
     coordinator.data = ElkPanelData(zones=[temp_zone, analog_zone, door_zone])
     coordinator.async_add_listener = MagicMock(return_value=lambda: None)
 
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
@@ -310,7 +310,7 @@ async def test_setup_entry_only_creates_sensors_for_temperature_and_analog_zones
     def _async_add_entities(new_entities):
         added.extend(new_entities)
 
-    await async_setup_entry(hass, mock_network_entry, _async_add_entities)
+    await async_setup_entry(hass, mock_serial_entry, _async_add_entities)
 
     zone_sensors = [e for e in added if isinstance(e, ElkZone)]
     assert len(zone_sensors) == 2

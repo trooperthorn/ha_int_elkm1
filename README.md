@@ -5,7 +5,16 @@
 ![Home Assistant](https://img.shields.io/badge/Home_Assistant-2026.8.3-blue.svg?style=for-the-badge)
 
 A Home Assistant custom integration for **Elk-M1 Gold** and **M1EZ8** security/automation
-control panels, connected over the network (M1XEP module) or a direct serial/USB cable.
+control panels, connected over a direct serial/USB cable.
+
+**Serial/USB is the only supported connection method.** Network connectivity through an
+M1XEP Ethernet module was removed entirely (not merely undocumented) as a deliberate
+security decision: the M1XEP's TLS support went no further than TLS 1.0 by default and
+required disabling OpenSSL's cipher-strength floor and allowing legacy insecure
+renegotiation just to interoperate, and a serial/USB connection has no network attack
+surface at all. See `docs/decisions.md` (2026-09-05) for the full reasoning. If you were
+previously connected over the network, that config entry has no supported upgrade path -
+reconnect the panel via serial/USB and set the integration up again.
 
 *This is a community-developed integration and is not officially affiliated with Elk
 Products, Inc.*
@@ -29,12 +38,12 @@ entry) is a fallback for panels that have broadcasts disabled, not the primary d
 ## Requirements
 
 * Home Assistant 2026.8.3 on Python 3.14.2 or newer.
-* An Elk-M1 Security Panel connected via an M1XEP Ethernet module, or a direct
-  serial/USB cable.
+* An Elk-M1 Security Panel connected via a direct serial/USB cable to the panel's own
+  DB-9 port.
 
-Direct serial currently uses pinned `pyserial-asyncio-fast`; the planned dependency
-transition is to Home Assistant's `serialx` stack. The legacy `pyserial-asyncio`
-package is intentionally not installed alongside it.
+Serial uses `serialx` (pinned in `manifest.json`), Home Assistant's own maintained
+replacement for `pyserial-asyncio`, which cannot be installed on current Home Assistant
+versions.
 
 ## Installation
 
@@ -52,20 +61,31 @@ package is intentionally not installed alongside it.
 ### Setup
 1. In Home Assistant, go to **Settings > Devices & Services > Add Integration** and
    search for **Elk-M1**.
-2. Follow **Connection method > Interface or discovered panel > Verify ELK-M1 > ELK
-   options > Complete**. Network discovery, manual network entry, and direct Serial/USB
-   remain separate choices. Serial uses Home Assistant's serial-port selector and only
-   the selected port is probed.
-3. For a network connection, the panel's username/password (for secure schemes) are
-   verified with a real, briefly-lived connection before the entry is created. For
-   serial, the selected port is probed with an ELK `vn` request while sweeping baud
-   rates automatically. Generic USB chip VID/PID pairs are intentionally not advertised
-   as ELK devices; choose the adapter explicitly unless product-specific metadata is
-   available.
+2. Pick the serial port from Home Assistant's serial-port selector, an optional prefix
+   (only needed if you have more than one panel), and an optional PIN (see "PIN and
+   password fields" below). Only the selected port is probed - generic USB chip VID/PID
+   pairs are intentionally not advertised as ELK devices, since they identify the
+   bridge chip, not the panel; choose the adapter explicitly.
+3. The selected port is probed with an ELK `vn` request while sweeping baud rates
+   automatically, then **ELK options > Complete**.
 
 Afterward, **Settings > Devices & Services > Elk-M1 > Configure** lets you change the
 poll-interval fallback, and **Reconfigure** lets you change the connection itself
 without deleting and re-adding the integration.
+
+### PIN and password fields
+
+The panel PIN you enter during setup or reconfigure is masked on screen and is never
+displayed in the clear, including when reopening the form to change it later (it shows
+as a password field, pre-filled but hidden, rather than plain text). It is stored in Home
+Assistant's own config-entry storage like any other integration credential, and is
+redacted from any diagnostics download. It exists purely as a fallback for automations
+or service calls that omit a `code` field (so an unattended automation can still arm or
+disarm) - it does not weaken the Lovelace alarm card's own requirement that a person type
+the real code before arming or disarming from the dashboard. Avoid typing the code
+directly into an automation or script's action data; let it fall through to this stored
+value instead, so the code never appears in your automation configuration at all. See
+`docs/decisions.md` (2026-09-05) for the full reasoning.
 
 ## What it creates
 
@@ -164,4 +184,4 @@ Design rationale, protocol facts, and the release path live under `docs/`; start
 
 Hardware release qualification is deliberately separate from mocked CI. See
 [`docs/live_qualification.md`](docs/live_qualification.md); a passing config-flow test
-does not prove a live secure/non-secure XEP or serial panel connection.
+does not prove a live serial panel connection.

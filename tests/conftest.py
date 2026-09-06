@@ -18,23 +18,6 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 
 @pytest.fixture
-def mock_network_entry() -> MockConfigEntry:
-    """A MockConfigEntry for a network-connected panel, not yet added to hass."""
-    return MockConfigEntry(
-        domain=DOMAIN,
-        data={
-            "connection_type": "network",
-            "host": "elk://1.2.3.4",
-            "username": "",
-            "password": "",
-            "prefix": "",
-            "mac_address": "aa:bb:cc:dd:ee:ff",
-        },
-        unique_id="aa:bb:cc:dd:ee:ff",
-    )
-
-
-@pytest.fixture
 def mock_serial_entry() -> MockConfigEntry:
     """A MockConfigEntry for a serial-connected panel, not yet added to hass."""
     return MockConfigEntry(

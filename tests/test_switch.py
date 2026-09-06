@@ -266,7 +266,7 @@ def test_arm_request_switch_device_info_includes_panel_version():
 
 
 async def test_setup_entry_creates_arm_switch_and_dynamic_output_thermostat_entities(
-    hass, mock_network_entry
+    hass, mock_serial_entry
 ):
     from custom_components.elkm1.helpers.elk.outputs import Output
     from custom_components.elkm1.helpers.elk.thermostats import Thermostat
@@ -295,10 +295,10 @@ async def test_setup_entry_creates_arm_switch_and_dynamic_output_thermostat_enti
     )
     coordinator.async_add_listener = MagicMock(return_value=lambda: None)
 
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
@@ -309,7 +309,7 @@ async def test_setup_entry_creates_arm_switch_and_dynamic_output_thermostat_enti
     def _async_add_entities(new_entities):
         added.extend(new_entities)
 
-    await async_setup_entry(hass, mock_network_entry, _async_add_entities)
+    await async_setup_entry(hass, mock_serial_entry, _async_add_entities)
 
     assert any(isinstance(e, ElkArmRequestSwitch) for e in added)
     assert any(isinstance(e, ElkOutput) and e._index == 0 for e in added)
@@ -321,7 +321,7 @@ async def test_setup_entry_creates_arm_switch_and_dynamic_output_thermostat_enti
     assert any(isinstance(e, ElkThermostatEMHeat) and e._index == 0 for e in added)
 
 
-async def test_unconfigured_outputs_past_64_get_no_entity(hass, mock_network_entry):
+async def test_unconfigured_outputs_past_64_get_no_entity(hass, mock_serial_entry):
     """Outputs 65-208 are almost never physically present; unlike the old
     unconditional-registration behavior, an unconfigured one must not create
     a switch entity at all, the same rule every other output/zone/thermostat
@@ -337,10 +337,10 @@ async def test_unconfigured_outputs_past_64_get_no_entity(hass, mock_network_ent
     coordinator.data = ElkPanelData(outputs=[unconfigured_output])
     coordinator.async_add_listener = MagicMock(return_value=lambda: None)
 
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
@@ -351,6 +351,6 @@ async def test_unconfigured_outputs_past_64_get_no_entity(hass, mock_network_ent
     def _async_add_entities(new_entities):
         added.extend(new_entities)
 
-    await async_setup_entry(hass, mock_network_entry, _async_add_entities)
+    await async_setup_entry(hass, mock_serial_entry, _async_add_entities)
 
     assert not any(isinstance(e, ElkOutput) and e._index == 64 for e in added)

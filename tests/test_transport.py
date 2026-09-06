@@ -1,4 +1,9 @@
-"""Tests for entry-owned transport lifecycle behavior."""
+"""Tests for entry-owned transport lifecycle behavior.
+
+Serial/USB is the only supported transport - network (M1XEP) connectivity,
+including the heartbeat supervisor it required, was removed entirely
+2026-09-05 as a deliberate security posture. See docs/decisions.md.
+"""
 
 from __future__ import annotations
 
@@ -25,16 +30,11 @@ from custom_components.elkm1.helpers.elk.message import (
 )
 from custom_components.elkm1.helpers.elk.notify import Notifier
 from custom_components.elkm1.helpers.transport import (
-    DEFAULT_HEARTBEAT_TIMEOUT,
-    ConnectionTimeoutError,
     ElkConnectionManager,
-    InvalidAuthError,
     _async_close_transport,
     _entry_connect,
-    _entry_heartbeat,
     _entry_read_stream,
     _failure_category,
-    validate_network_connection,
     validate_serial_port,
 )
 
@@ -68,47 +68,17 @@ class _Writer:
         self.closed = True
 
 
-def test_manager_defaults_to_the_standard_heartbeat_timeout() -> None:
-    manager = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2101"}))
-
-    assert manager.connection.heartbeat_timeout == DEFAULT_HEARTBEAT_TIMEOUT
-
-
-def test_manager_accepts_a_scaled_heartbeat_timeout() -> None:
-    """A poll interval longer than the default heartbeat window must not force reconnects."""
-    manager = ElkConnectionManager(
-        Elk({"url": "elk://127.0.0.1:2101"}), heartbeat_timeout=250.0
-    )
-
-    assert manager.connection.heartbeat_timeout == 250.0
-
-
-async def test_entry_heartbeat_uses_the_configured_timeout() -> None:
-    notifier = Notifier()
-    connection = Connection("elk://test", notifier)
-    connection.writer = MagicMock()
-    connection.heartbeat_timeout = 250.0
-
-    with patch("custom_components.elkm1.helpers.transport.asyncio.timeout") as mock_timeout:
-        mock_timeout.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError)
-        mock_timeout.return_value.__aexit__ = AsyncMock(return_value=False)
-        with pytest.raises(asyncio.CancelledError):
-            await _entry_heartbeat(connection)
-
-    mock_timeout.assert_called_once_with(250.0)
-
-
 def test_manager_owns_a_private_connection_instance() -> None:
     """Constructing a manager changes only its entry's own connection state,
     never a second entry's - the class itself carries no monkey-patched or
     shared mutable state (see docs/decisions.md 2026-09-05).
     """
-    manager_a = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2101"}))
-    manager_b = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2102"}))
+    manager_a = ElkConnectionManager(Elk({"url": "serial://COM1"}))
+    manager_b = ElkConnectionManager(Elk({"url": "serial://COM2"}))
 
     assert manager_a.connection is not manager_b.connection
-    manager_a.connection.heartbeat_timeout = 999.0
-    assert manager_b.connection.heartbeat_timeout != 999.0
+    manager_a.connection.retry_delay = 999
+    assert manager_b.connection.retry_delay != 999
 
 
 @pytest.mark.parametrize(
@@ -126,7 +96,7 @@ def test_entry_send_carries_the_documented_response_metadata(encode, response) -
     docs/decisions.md 2026-09-05), and Connection.send() must queue it
     unmodified.
     """
-    manager = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2101"}))
+    manager = ElkConnectionManager(Elk({"url": "serial://COM1"}))
     manager.connection.writer = MagicMock()
 
     manager.connection.send(encode())
@@ -135,7 +105,7 @@ def test_entry_send_carries_the_documented_response_metadata(encode, response) -
 
 
 def test_entry_send_rejects_disconnected_or_paused_transport() -> None:
-    manager = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2101"}))
+    manager = ElkConnectionManager(Elk({"url": "serial://COM1"}))
     message = MessageEncode("06vn00", "VN")
 
     with pytest.raises(ConnectionError, match="disconnected"):
@@ -149,7 +119,7 @@ def test_entry_send_rejects_disconnected_or_paused_transport() -> None:
 
 async def test_read_stream_validates_before_response_correlation() -> None:
     notifier = Notifier()
-    connection = Connection("elk://test", notifier)
+    connection = Connection("serial://COM1", notifier)
     connection.awaiting_response_command = "VN"
     valid = _wire("VN", "050003080000")
     corrupt = valid[:-1] + ("0" if valid[-1] != "0" else "1")
@@ -163,7 +133,7 @@ async def test_read_stream_validates_before_response_correlation() -> None:
 
 async def test_read_stream_rejects_overlength_complete_frame() -> None:
     notifier = Notifier()
-    connection = Connection("elk://test", notifier)
+    connection = Connection("serial://COM1", notifier)
     unknown: list[dict] = []
     notifier.attach("unknown", lambda **payload: unknown.append(payload))
     overlength = _wire("ZZ", "A" * 1100)
@@ -176,7 +146,7 @@ async def test_read_stream_rejects_overlength_complete_frame() -> None:
 async def test_read_stream_discards_overlength_unterminated_input() -> None:
     """An unterminated stream that never completes a frame must not grow forever."""
     notifier = Notifier()
-    connection = Connection("elk://test", notifier)
+    connection = Connection("serial://COM1", notifier)
     unknown: list[dict] = []
     notifier.attach("unknown", lambda **payload: unknown.append(payload))
     unterminated = "A" * 1100
@@ -188,7 +158,7 @@ async def test_read_stream_discards_overlength_unterminated_input() -> None:
 
 async def test_read_stream_skips_frames_that_decode_to_none() -> None:
     notifier = Notifier()
-    connection = Connection("elk://test", notifier)
+    connection = Connection("serial://COM1", notifier)
     version = _wire("VN", "050003080000")
     versions: list[dict] = []
     notifier.attach("VN", lambda **payload: versions.append(payload))
@@ -200,7 +170,7 @@ async def test_read_stream_skips_frames_that_decode_to_none() -> None:
 
 async def test_read_stream_decodes_all_lights_and_complete_keypad_status() -> None:
     notifier = Notifier()
-    connection = Connection("elk://test", notifier)
+    connection = Connection("serial://COM1", notifier)
     all_lights: list[dict] = []
     keypad_details: list[dict] = []
     notifier.attach("PC_ALL", lambda **payload: all_lights.append(payload))
@@ -224,7 +194,7 @@ async def test_read_stream_decodes_all_lights_and_complete_keypad_status() -> No
 
 async def test_invalid_supplemental_keypad_fields_do_not_stop_stream() -> None:
     notifier = Notifier()
-    connection = Connection("elk://test", notifier)
+    connection = Connection("serial://COM1", notifier)
     versions: list[dict] = []
     details: list[dict] = []
     notifier.attach("VN", lambda **payload: versions.append(payload))
@@ -257,10 +227,10 @@ async def test_baud_probe_ignores_unsolicited_frame_before_vn() -> None:
 
 async def test_stop_cancels_backoff_connect_task() -> None:
     """An unload cannot leave a reconnect/backoff task running."""
-    manager = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2101"}))
+    manager = ElkConnectionManager(Elk({"url": "serial://COM1"}))
     entered_backoff = asyncio.Event()
 
-    async def _fail_connect(*_args, **_kwargs):
+    async def _fail_open(*_args, **_kwargs):
         raise OSError("offline")
 
     async def _backoff(_delay: float) -> None:
@@ -268,7 +238,10 @@ async def test_stop_cancels_backoff_connect_task() -> None:
         await asyncio.Event().wait()
 
     with (
-        patch("asyncio.open_connection", _fail_connect),
+        patch(
+            "custom_components.elkm1.helpers.transport.open_probed_serial",
+            _fail_open,
+        ),
         patch("custom_components.elkm1.helpers.transport.asyncio.sleep", _backoff),
     ):
         connect_task = manager.start()
@@ -299,36 +272,9 @@ def test_failure_category_classifies_every_transport_error(err, category) -> Non
     assert _failure_category(err) == category
 
 
-async def test_entry_heartbeat_raises_when_not_paused() -> None:
-    notifier = Notifier()
-    connection = Connection("elk://test", notifier)
-    connection.writer = MagicMock()
-    connection.heartbeat_timeout = 0.01
-
-    with pytest.raises(ConnectionError, match="heartbeat timed out"):
-        await _entry_heartbeat(connection)
-
-
-async def test_entry_heartbeat_ignores_timeout_while_paused() -> None:
-    notifier = Notifier()
-    connection = Connection("elk://test", notifier)
-    connection.writer = MagicMock()
-    connection.heartbeat_timeout = 0.01
-    connection._paused = True
-
-    async def _clear_writer_after_first_timeout() -> None:
-        await asyncio.sleep(0.03)
-        connection.writer = None
-        connection.heartbeat_event.set()
-
-    watcher = asyncio.create_task(_clear_writer_after_first_timeout())
-    await _entry_heartbeat(connection)
-    await watcher
-
-
 async def test_async_close_transport_cancels_gathers_and_closes_writer() -> None:
     notifier = Notifier()
-    connection = Connection("elk://test", notifier)
+    connection = Connection("serial://COM1", notifier)
     connection.writer = _Writer()
     hung = asyncio.create_task(asyncio.Event().wait(), name="elkm1-hung")
     connection.tasks.add(hung)
@@ -342,7 +288,7 @@ async def test_async_close_transport_cancels_gathers_and_closes_writer() -> None
 
 async def test_async_close_transport_handles_no_tasks_and_no_wait_closed() -> None:
     notifier = Notifier()
-    connection = Connection("elk://test", notifier)
+    connection = Connection("serial://COM1", notifier)
     writer = MagicMock(spec=["write", "close"])
     connection.writer = writer
 
@@ -354,7 +300,7 @@ async def test_async_close_transport_handles_no_tasks_and_no_wait_closed() -> No
 
 async def test_async_close_transport_awaits_wait_closed_when_present() -> None:
     notifier = Notifier()
-    connection = Connection("elk://test", notifier)
+    connection = Connection("serial://COM1", notifier)
     writer = MagicMock(spec=["write", "close", "wait_closed"])
     writer.wait_closed = AsyncMock()
     connection.writer = writer
@@ -366,7 +312,7 @@ async def test_async_close_transport_awaits_wait_closed_when_present() -> None:
 
 async def test_async_close_transport_suppresses_wait_closed_errors() -> None:
     notifier = Notifier()
-    connection = Connection("elk://test", notifier)
+    connection = Connection("serial://COM1", notifier)
     writer = MagicMock(spec=["write", "close", "wait_closed"])
     writer.wait_closed = AsyncMock(side_effect=ConnectionError("already gone"))
     connection.writer = writer
@@ -379,7 +325,7 @@ async def test_async_close_transport_suppresses_wait_closed_errors() -> None:
 async def test_wrap_baud_callback_records_and_forwards_detection() -> None:
     seen: list[int] = []
     manager = ElkConnectionManager(
-        Elk({"url": "elk://127.0.0.1:2101"}), on_baud_detected=seen.append
+        Elk({"url": "serial://COM1"}), on_baud_detected=seen.append
     )
 
     assert manager.connection.on_baud_detected is not None
@@ -390,7 +336,7 @@ async def test_wrap_baud_callback_records_and_forwards_detection() -> None:
 
 
 async def test_wrap_baud_callback_tolerates_no_user_callback() -> None:
-    manager = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2101"}))
+    manager = ElkConnectionManager(Elk({"url": "serial://COM1"}))
 
     manager.connection.on_baud_detected(19200)
 
@@ -404,7 +350,7 @@ def test_manager_caches_the_supplied_baud_at_construction() -> None:
 
 
 def test_on_transport_connected_counts_only_reconnects() -> None:
-    manager = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2101"}))
+    manager = ElkConnectionManager(Elk({"url": "serial://COM1"}))
 
     manager._on_transport_connected()
     assert manager.transport_state == "connected"
@@ -415,7 +361,7 @@ def test_on_transport_connected_counts_only_reconnects() -> None:
 
 
 def test_mark_disconnected_leaves_a_stopped_manager_stopped() -> None:
-    manager = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2101"}))
+    manager = ElkConnectionManager(Elk({"url": "serial://COM1"}))
 
     manager.transport_state = "connected"
     manager.mark_disconnected()
@@ -427,7 +373,7 @@ def test_mark_disconnected_leaves_a_stopped_manager_stopped() -> None:
 
 
 async def test_async_stop_closes_an_active_writer_and_drains_tasks() -> None:
-    manager = ElkConnectionManager(Elk({"url": "elk://127.0.0.1:2101"}))
+    manager = ElkConnectionManager(Elk({"url": "serial://COM1"}))
     writer = MagicMock(spec=["write", "close", "wait_closed"])
     writer.wait_closed = AsyncMock()
     manager.connection.writer = writer
@@ -485,21 +431,24 @@ async def test_entry_connect_serial_success_then_closes_on_stream_end() -> None:
 
 
 async def test_entry_connect_retries_after_connect_failure() -> None:
-    connection = Connection("elk://127.0.0.1:2101", Notifier())
+    connection = Connection("serial://COM1", Notifier())
     on_failure = MagicMock()
     connection.on_failure = on_failure
     connection.retry_delay = 1
     backoff_entered = asyncio.Event()
 
-    async def _fail_connect(*_args, **_kwargs):
-        raise ValueError("bad host")
+    async def _fail_open(*_args, **_kwargs):
+        raise ValueError("bad port")
 
     async def _backoff(delay: float) -> None:
         backoff_entered.set()
         await asyncio.Event().wait()
 
     with (
-        patch("asyncio.open_connection", _fail_connect),
+        patch(
+            "custom_components.elkm1.helpers.transport.open_probed_serial",
+            _fail_open,
+        ),
         patch("custom_components.elkm1.helpers.transport.asyncio.sleep", _backoff),
     ):
         task = asyncio.create_task(_entry_connect(connection))
@@ -509,14 +458,14 @@ async def test_entry_connect_retries_after_connect_failure() -> None:
             await task
 
     assert connection.retry_delay == 2
-    on_failure.assert_called_once_with("configuration", "bad host")
+    on_failure.assert_called_once_with("configuration", "bad port")
 
 
 async def test_entry_connect_retries_again_then_cancels_during_the_next_attempt() -> None:
     """After a backoff sleep returns, the loop must retry (not just back off once);
     cancelling during that next open attempt must propagate cleanly.
     """
-    connection = Connection("elk://127.0.0.1:2101", Notifier())
+    connection = Connection("serial://COM1", Notifier())
     call_count = 0
     second_attempt_started = asyncio.Event()
 
@@ -529,7 +478,10 @@ async def test_entry_connect_retries_again_then_cancels_during_the_next_attempt(
         raise OSError("offline")
 
     with (
-        patch("asyncio.open_connection", _fail_then_hang),
+        patch(
+            "custom_components.elkm1.helpers.transport.open_probed_serial",
+            _fail_then_hang,
+        ),
         patch(
             "custom_components.elkm1.helpers.transport.asyncio.sleep",
             AsyncMock(return_value=None),
@@ -546,7 +498,7 @@ async def test_entry_connect_retries_again_then_cancels_during_the_next_attempt(
 
 async def test_entry_connect_propagates_cancellation_while_streaming() -> None:
     """Cancelling the owning task while streams are up must close them cleanly."""
-    connection = Connection("elk://127.0.0.1:2101", Notifier())
+    connection = Connection("serial://COM1", Notifier())
 
     class _HangingReader:
         async def read(self, _size: int) -> bytes:
@@ -556,8 +508,8 @@ async def test_entry_connect_propagates_cancellation_while_streaming() -> None:
     writer = _Writer()
 
     with patch(
-        "custom_components.elkm1.helpers.transport.asyncio.open_connection",
-        AsyncMock(return_value=(_HangingReader(), writer)),
+        "custom_components.elkm1.helpers.transport.open_probed_serial",
+        AsyncMock(return_value=(9600, _HangingReader(), writer)),
     ):
         task = asyncio.create_task(_entry_connect(connection))
         for _ in range(1000):
@@ -574,7 +526,7 @@ async def test_entry_connect_propagates_cancellation_while_streaming() -> None:
 
 
 async def test_entry_connect_surfaces_a_read_stream_exception() -> None:
-    connection = Connection("elk://127.0.0.1:2101", Notifier())
+    connection = Connection("serial://COM1", Notifier())
     on_failure = MagicMock()
     connection.on_failure = on_failure
     connection.retry_delay = 1
@@ -592,8 +544,8 @@ async def test_entry_connect_surfaces_a_read_stream_exception() -> None:
 
     with (
         patch(
-            "custom_components.elkm1.helpers.transport.asyncio.open_connection",
-            AsyncMock(return_value=(_BrokenReader(), writer)),
+            "custom_components.elkm1.helpers.transport.open_probed_serial",
+            AsyncMock(return_value=(9600, _BrokenReader(), writer)),
         ),
         patch("custom_components.elkm1.helpers.transport.asyncio.sleep", _backoff),
     ):
@@ -616,46 +568,3 @@ async def test_validate_serial_port_delegates_to_probe_baud() -> None:
 
     assert result == 57600
     mock_probe.assert_called_once_with("COM3", 38400)
-
-
-async def test_validate_network_connection_succeeds_on_version_and_login(
-    monkeypatch,
-) -> None:
-    fire_tasks: list[asyncio.Task[None]] = []
-
-    def _fake_start(self: ElkConnectionManager) -> None:
-        async def _fire() -> None:
-            await asyncio.sleep(0)
-            self.elk._notifier.notify("VN", {})
-            self.elk._notifier.notify("login", {"succeeded": True})
-
-        fire_tasks.append(asyncio.create_task(_fire()))
-
-    monkeypatch.setattr(ElkConnectionManager, "start", _fake_start)
-
-    await validate_network_connection(
-        "elk://127.0.0.1:2101", userid="6", password="secret", timeout=5.0
-    )
-
-
-async def test_validate_network_connection_raises_on_rejected_login(monkeypatch) -> None:
-    fire_tasks: list[asyncio.Task[None]] = []
-
-    def _fake_start(self: ElkConnectionManager) -> None:
-        async def _fire() -> None:
-            await asyncio.sleep(0)
-            self.elk._notifier.notify("login", {"succeeded": False})
-
-        fire_tasks.append(asyncio.create_task(_fire()))
-
-    monkeypatch.setattr(ElkConnectionManager, "start", _fake_start)
-
-    with pytest.raises(InvalidAuthError):
-        await validate_network_connection("elk://127.0.0.1:2101", timeout=5.0)
-
-
-async def test_validate_network_connection_times_out_with_no_response(monkeypatch) -> None:
-    monkeypatch.setattr(ElkConnectionManager, "start", lambda self: None)
-
-    with pytest.raises(ConnectionTimeoutError):
-        await validate_network_connection("elk://127.0.0.1:2101", timeout=0.02)

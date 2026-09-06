@@ -19,18 +19,15 @@ The serial stack is `serialx` (developer blog 2026-04-27); it is the only runtim
 dependency `manifest.json` declares (see `docs/decisions.md` 2026-09-05 for the removal of
 the `elkm1-lib` dependency that used to also pull in `pyserial-asyncio-fast`).
 
-## Heartbeat and poll interval
+## Heartbeat (removed with network connectivity)
 
-`helpers/transport.py`'s `DEFAULT_HEARTBEAT_TIMEOUT` fixes a 120 second network heartbeat
-window on `helpers/elk/connection.py`'s `Connection`. The assumption in that constant is
-that some traffic, a broadcast or a poll reply, reaches the socket inside it. That held
-while the poll fallback was fixed at 30 seconds. The options flow now allows
-up to `MAX_POLL_INTERVAL` (300 seconds); a panel with "Xmit ... Changes" disabled and a
-poll interval past the window would otherwise reconnect roughly every 120 seconds no matter
-what interval the user chose. `ElkConnectionManager` therefore scales the heartbeat window
-to the poll interval plus `HEARTBEAT_MARGIN` (30 seconds), capped at `MAX_POLL_INTERVAL`.
-Regression tests: `tests/test_coordinator.py::test_async_setup_scales_heartbeat_timeout_with_poll_interval`
-and `tests/test_transport.py::test_manager_accepts_a_scaled_heartbeat_timeout`.
+A heartbeat supervisor used to fix a network keepalive window on
+`helpers/elk/connection.py`'s `Connection`, scaled to the configured poll interval so a
+panel with "Xmit ... Changes" disabled and a long poll interval wouldn't reconnect every
+120 seconds regardless of what interval the user chose. It was removed entirely
+2026-09-05 along with network/M1XEP connectivity (see `docs/decisions.md`): a serial/USB
+link has no equivalent "silently half-open" failure mode a TCP socket can have, since a
+broken cable fails a read or write immediately.
 
 ## Command buffer
 

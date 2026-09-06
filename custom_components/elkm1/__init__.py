@@ -7,11 +7,10 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_PREFIX, Platform
+from homeassistant.const import CONF_PREFIX, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv, device_registry as dr
-from homeassistant.util.network import is_ip_address
 
 from .alarmo_integration import async_setup_alarmo_auto_config
 from .const import (
@@ -19,19 +18,13 @@ from .const import (
     CONF_BAUD_RATE,
     CONF_CONNECTION_TYPE,
     CONF_DEVICE_ID,
-    CONF_MAC_ADDRESS,
     CONF_POLL_INTERVAL,
     CONF_SERIAL_PORT,
-    CONNECTION_NETWORK,
     CONNECTION_SERIAL,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
 )
 from .coordinator import ElkDataUpdateCoordinator
-from .discovery import (
-    async_discover_device,
-    async_update_entry_from_discovery,
-)
 from .entity import create_elk_system_device_info
 from .helpers.panel_settings import verify_panel_configuration
 from .models import ElkRuntimeData
@@ -72,32 +65,35 @@ async def async_setup(hass: HomeAssistant, _hass_config: dict[str, Any]) -> bool
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate legacy entries to the explicit transport and identity schema."""
-    if entry.version > 2:
+    """Migrate legacy entries to the explicit, serial-only transport schema.
+
+    Network/M1XEP connectivity was removed entirely (see docs/decisions.md
+    2026-09-05 - serial-only is a deliberate security posture, not a gap).
+    A network-shaped entry has no supported path forward and fails to
+    migrate; a serial-shaped entry from either schema version is normalized.
+    """
+    if entry.version > 3:
         return False
 
     data = dict(entry.data)
     serial_port = data.get(CONF_SERIAL_PORT)
-    unique_id = entry.unique_id
-    if serial_port or str(data.get(CONF_HOST, "")).startswith("serial://"):
-        if not serial_port:
-            serial_port = hostname_from_url(str(data[CONF_HOST]))
-            data[CONF_SERIAL_PORT] = serial_port
-            data.pop(CONF_HOST, None)
-        data[CONF_CONNECTION_TYPE] = CONNECTION_SERIAL
-        device_id = str(data.get(CONF_DEVICE_ID) or f"serial:{serial_port}")
-        data[CONF_DEVICE_ID] = device_id
-        unique_id = device_id
-    else:
-        data[CONF_CONNECTION_TYPE] = CONNECTION_NETWORK
-        if unique_id and ":" in unique_id:
-            data[CONF_MAC_ADDRESS] = unique_id
+    legacy_host = str(data.get("host", ""))
+    if not serial_port and not legacy_host.startswith("serial://"):
+        return False
+
+    if not serial_port:
+        serial_port = hostname_from_url(legacy_host)
+        data[CONF_SERIAL_PORT] = serial_port
+    data.pop("host", None)
+    data[CONF_CONNECTION_TYPE] = CONNECTION_SERIAL
+    device_id = str(data.get(CONF_DEVICE_ID) or f"serial:{serial_port}")
+    data[CONF_DEVICE_ID] = device_id
 
     hass.config_entries.async_update_entry(
         entry,
         data=data,
-        unique_id=unique_id,
-        version=2,
+        unique_id=device_id,
+        version=3,
         minor_version=1,
     )
     return True
@@ -108,26 +104,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElkM1ConfigEntry) -> boo
     conf = dict(entry.data)
 
     serial_port = conf.get(CONF_SERIAL_PORT)
-    if serial_port:
-        connection_url = f"serial://{serial_port}"
-        conf[CONF_CONNECTION_TYPE] = CONNECTION_SERIAL
-    else:
-        connection_url = conf.get(CONF_HOST, "")
-        conf[CONF_CONNECTION_TYPE] = (
-            CONNECTION_SERIAL
-            if connection_url.startswith("serial://")
-            else CONNECTION_NETWORK
-        )
+    if not serial_port:
+        raise ConfigEntryNotReady("Serial port not configured")
+    connection_url = f"serial://{serial_port}"
+    conf[CONF_CONNECTION_TYPE] = CONNECTION_SERIAL
 
-    host = hostname_from_url(connection_url)
     _LOGGER.info("Setting up elkm1 at %s", connection_url)
-
-    if (
-        (not entry.unique_id or ":" not in entry.unique_id)
-        and is_ip_address(host)
-        and (device := await async_discover_device(hass, host))
-    ):
-        async_update_entry_from_discovery(hass, entry, device)
 
     def _on_baud_detected(baud: int) -> None:
         """Persist a newly detected baud rate so reconnects try it first."""

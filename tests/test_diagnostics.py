@@ -9,7 +9,7 @@ from custom_components.elkm1.models import AreaData, ElkRuntimeData
 
 
 async def test_diagnostics_redacts_identity_secrets(
-    hass, mock_network_entry
+    hass, mock_serial_entry
 ) -> None:
     """Credentials and endpoints are redacted while lifecycle health remains."""
     coordinator = MagicMock()
@@ -17,7 +17,7 @@ async def test_diagnostics_redacts_identity_secrets(
     coordinator.connected = False
     coordinator.last_update_success = True
     coordinator.transport_diagnostics = {
-        "transport": "network",
+        "transport": "serial",
         "transport_state": "reconnecting",
         "detected_baud": None,
         "login_state": "authenticated",
@@ -27,12 +27,12 @@ async def test_diagnostics_redacts_identity_secrets(
         "last_poll_success": None,
         "broadcast_counts": {"ZC": 1},
     }
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="panel",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=False,
         config={
-            **mock_network_entry.data,
+            **mock_serial_entry.data,
             "username": "user",
             "password": "secret",
             "pin": "1234",
@@ -40,9 +40,9 @@ async def test_diagnostics_redacts_identity_secrets(
         coordinator=coordinator,
     )
 
-    result = await async_get_config_entry_diagnostics(hass, mock_network_entry)
+    result = await async_get_config_entry_diagnostics(hass, mock_serial_entry)
 
-    assert result["config_entry"]["data"]["host"] == "**REDACTED**"
+    assert result["config_entry"]["data"]["serial_port"] == "**REDACTED**"
     assert result["config_entry"]["config_filters"]["password"] == "**REDACTED**"
     assert result["config_entry"]["config_filters"]["pin"] == "**REDACTED**"
     assert result["transport"]["reconnect_count"] == 2
@@ -57,7 +57,7 @@ def _element(**attrs) -> MagicMock:
 
 
 async def test_diagnostics_includes_panel_snapshot_and_serialized_elements(
-    hass, mock_network_entry
+    hass, mock_serial_entry
 ) -> None:
     """When coordinator data is present, panel/areas/elements are all reported."""
     import enum
@@ -86,15 +86,15 @@ async def test_diagnostics_includes_panel_snapshot_and_serialized_elements(
         thermostats=[_element(name="Thermostat 1")],
         tasks=[_element(name="Task 1")],
     )
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="panel",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=False,
-        config=dict(mock_network_entry.data),
+        config=dict(mock_serial_entry.data),
         coordinator=coordinator,
     )
 
-    result = await async_get_config_entry_diagnostics(hass, mock_network_entry)
+    result = await async_get_config_entry_diagnostics(hass, mock_serial_entry)
 
     assert result["panel"]["elkm1_version"] == "5.2.0"
     assert result["health"] == {"push": "not_observed", "fallback_poll": "failed"}

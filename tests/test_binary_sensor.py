@@ -231,7 +231,7 @@ class _FakeCoordinator:
 
 
 async def test_zone_binary_sensor_appears_once_configured_after_setup(
-    hass, mock_network_entry
+    hass, mock_serial_entry
 ):
     """A zone not yet `.configured` at setup must still get its entity once configured."""
     conn = MagicMock()
@@ -242,10 +242,10 @@ async def test_zone_binary_sensor_appears_once_configured_after_setup(
     assert zone.configured is False
 
     coordinator = _FakeCoordinator(ElkPanelData(num_areas=1, zones=[zone]))
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
@@ -256,7 +256,7 @@ async def test_zone_binary_sensor_appears_once_configured_after_setup(
     def _async_add_entities(new_entities):
         added_batches.append(list(new_entities))
 
-    await async_setup_entry(hass, mock_network_entry, _async_add_entities)
+    await async_setup_entry(hass, mock_serial_entry, _async_add_entities)
 
     # First pass: fixed trouble/area-openings entities only, no zone sensor yet.
     first_pass_zone_entities = [
@@ -284,7 +284,7 @@ async def test_zone_binary_sensor_appears_once_configured_after_setup(
 
 
 async def test_area_openings_setup_uses_real_area_indices_not_a_contiguous_range(
-    hass, mock_network_entry
+    hass, mock_serial_entry
 ):
     """A panel can have a gap (e.g. Area 2 never programmed) while a later
     area (e.g. Area 8) is real. range(num_areas) would create a sensor for
@@ -293,10 +293,10 @@ async def test_area_openings_setup_uses_real_area_indices_not_a_contiguous_range
     coordinator = _FakeCoordinator(
         ElkPanelData(num_areas=3, areas={0: AreaData(), 2: AreaData(), 7: AreaData()})
     )
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
@@ -307,13 +307,13 @@ async def test_area_openings_setup_uses_real_area_indices_not_a_contiguous_range
     def _async_add_entities(new_entities):
         added.extend(new_entities)
 
-    await async_setup_entry(hass, mock_network_entry, _async_add_entities)
+    await async_setup_entry(hass, mock_serial_entry, _async_add_entities)
 
     opening_sensors = [e for e in added if isinstance(e, ElkAreaOpeningsBinarySensor)]
     assert {s._area_index for s in opening_sensors} == {0, 2, 7}
 
 
-async def test_temperature_and_analog_zones_get_no_binary_sensor(hass, mock_network_entry):
+async def test_temperature_and_analog_zones_get_no_binary_sensor(hass, mock_serial_entry):
     """Definitions 33 (temperature) and 34 (analog) are sensor.py entities,
     not binary sensors - async_setup_entry's zone filter must skip them."""
     conn = MagicMock()
@@ -324,10 +324,10 @@ async def test_temperature_and_analog_zones_get_no_binary_sensor(hass, mock_netw
     temp_zone.name = "Attic"
 
     coordinator = _FakeCoordinator(ElkPanelData(num_areas=1, zones=[temp_zone]))
-    mock_network_entry.add_to_hass(hass)
-    mock_network_entry.runtime_data = ElkRuntimeData(
+    mock_serial_entry.add_to_hass(hass)
+    mock_serial_entry.runtime_data = ElkRuntimeData(
         prefix="",
-        mac=mock_network_entry.unique_id,
+        mac=mock_serial_entry.unique_id,
         auto_configure=True,
         config={},
         coordinator=coordinator,
@@ -338,7 +338,7 @@ async def test_temperature_and_analog_zones_get_no_binary_sensor(hass, mock_netw
     def _async_add_entities(new_entities):
         added_batches.append(list(new_entities))
 
-    await async_setup_entry(hass, mock_network_entry, _async_add_entities)
+    await async_setup_entry(hass, mock_serial_entry, _async_add_entities)
 
     zone_entities = [
         e for batch in added_batches for e in batch if getattr(e, "_zone_index", None) == 0
