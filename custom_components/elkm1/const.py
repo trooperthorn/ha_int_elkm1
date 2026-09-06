@@ -55,6 +55,8 @@ ELK_ELEMENTS = {
 EVENT_ELKM1_KEYPAD_KEY_PRESSED = "elkm1.keypad_key_pressed"
 EVENT_ELKM1_USER_CODE_ENTERED = "elkm1.user_code_entered"
 EVENT_ELKM1_LOG_EVENT = "elkm1.log_event"
+EVENT_ELKM1_PROGRAMMING_STARTED = "elkm1.programming_started"
+EVENT_ELKM1_PROGRAMMING_ENDED = "elkm1.programming_ended"
 
 ATTR_DURATION = "duration"
 ATTR_KEYPAD_ID = "keypad_id"
@@ -80,6 +82,8 @@ SERVICE_SENSOR_COUNTER_SET = "sensor_counter_set"
 SERVICE_SENSOR_ZONE_BYPASS = "sensor_zone_bypass"
 SERVICE_SENSOR_ZONE_TRIGGER = "sensor_zone_trigger"
 SERVICE_SWITCH_OUTPUT_TURN_ON_FOR = "switch_output_turn_on_for"
+SERVICE_PROGRAMMING_SESSION_START = "programming_session_start"
+SERVICE_PROGRAMMING_SESSION_END = "programming_session_end"
 
 COUNTER_SET_SERVICE_SCHEMA: dict[Any, Any] = {
     vol.Required("value"): vol.All(vol.Coerce(int), vol.Range(min=0, max=65535)),

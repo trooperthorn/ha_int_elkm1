@@ -18,6 +18,7 @@ from .coordinator import ElkDataUpdateCoordinator
 from .entity import ElkEntity, async_add_dynamic_entities
 from .helpers.troublestatus import TROUBLE_INDEX_NAMES
 from .models import ElkRuntimeData
+from .programming import ProgrammingTracker, async_get_tracker
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,6 +88,9 @@ async def async_setup_entry(
     # One aggregate opening sensor per area, keyed by each area's real,
     # possibly non-contiguous index - not range(num_areas), which assumes
     # configured areas start at 0 with no gaps. See docs/decisions.md.
+    async_add_entities(
+        [ElkRemoteProgrammingBinarySensor(coordinator, config_entry, async_get_tracker(hass))]
+    )
     area_indices = sorted(coordinator.data.areas) if coordinator.data else [0]
     entities.extend(
         ElkAreaOpeningsBinarySensor(coordinator, config_entry, area_index)
@@ -237,6 +241,54 @@ class ElkZoneBypassBinarySensor(ElkEntity, BinarySensorEntity):
             return False
         # ZoneLogicalStatus.BYPASSED == 3.
         return self._enum_value(getattr(obj, "logical_status", 0)) == 3
+
+
+class ElkRemoteProgrammingBinarySensor(ElkEntity, BinarySensorEntity):
+    """On while the panel reports a remote programming session.
+
+    The state comes from the panel's own RP status; the attributes come from
+    programming.py's tracker, which adds who claimed the session. On a
+    serial installation the entry is disabled for the session, so this
+    entity is absent while programming and shows the last session after.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "remote_programming"
+    _attr_icon = "mdi:shield-edit"
+
+    def __init__(
+        self,
+        coordinator: ElkDataUpdateCoordinator,
+        config_entry: ConfigEntry,
+        tracker: ProgrammingTracker,
+    ) -> None:
+        super().__init__(coordinator, config_entry, "remote_programming")
+        self._tracker = tracker
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self._tracker.async_add_listener(self.async_write_ha_state))
+
+    @property
+    @override
+    def is_on(self) -> bool:
+        panel = getattr(self.coordinator.data, "panel", None)
+        status = getattr(panel, "remote_programming_status", 0)
+        value = int(status.value) if hasattr(status, "value") else int(status or 0)
+        return value != 0
+
+    @property
+    @override
+    def extra_state_attributes(self) -> dict[str, Any]:
+        state = self._tracker.state
+        return {
+            "source": state.source,
+            "claimed_by": state.claim.user if state.claim else None,
+            "purpose": state.claim.purpose if state.claim else None,
+            "last_started": state.last_started,
+            "last_ended": state.last_ended,
+            "session_count": state.session_count,
+        }
 
 
 class ElkTroubleBinarySensor(ElkEntity, BinarySensorEntity):

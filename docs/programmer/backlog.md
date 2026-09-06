@@ -31,13 +31,12 @@ Dated open items.
   characters is unverified.
 - 2026-09-06, keypad flag byte 3 maps enum names A to F onto F1 to F6 by
   assumption; verify against the form's control bindings.
-- 2026-09-06, the integration should raise a Repair issue when its entry is disabled
-  with no programming claim active, and the claim services should note that on serial
-  the entry is disabled rather than paused.
-- 2026-09-06, the integration side of the session claim: `elkm1.programming_session_start`
-  and `_end` services, the `remote_programming` binary sensor, the two events, and the
-  Repair issues, as specified in `app.md`; then the app's calls to them through the core
-  API proxy.
+- 2026-09-06, the app's calls to `elkm1.programming_session_start` and `_end` through
+  the core API proxy (the integration side is done); on serial the start call must go
+  before the entry is disabled and the end call after it is re-enabled.
+- 2026-09-06, a Repair issue when the integration's entry is disabled with no
+  programming claim active; needs a place to run while the entry is disabled, so it
+  belongs to the app side or to a domain-level listener, not the coordinator.
 - 2026-09-06, pin the programmer's Python dependencies (a constraints file the
   Dockerfile passes to pip) so the container's contents match the release SBOM.
 - 2026-09-06, a published multi-arch image with cosign signing would remove the
