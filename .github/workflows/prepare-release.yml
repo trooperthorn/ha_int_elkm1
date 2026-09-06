@@ -59,7 +59,9 @@ jobs:
             exit 0
           fi
 
-          if git diff --quiet "$LATEST_TAG"..HEAD -- custom_components/elkm1; then
+          RELEASE_PATHS="$(python3 -c "import json; print(' '.join(json.load(open('.release.json'))['release_paths']))")"
+          # shellcheck disable=SC2086
+          if git diff --quiet "$LATEST_TAG"..HEAD -- $RELEASE_PATHS; then
             echo "No release-bearing changes exist after $LATEST_TAG."
             printf 'prepare=false\n' >> "$GITHUB_OUTPUT"
             exit 0
