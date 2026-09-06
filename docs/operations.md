@@ -87,6 +87,16 @@ checks`, with strict up-to-date checks, enforced for administrators, no force
 pushes, no deletions, and no required approvals, because a single maintainer
 cannot approve their own PR and the automation must not need a bypass.
 
+## Release artifacts
+
+A merge to main publishes one release carrying both products: `elkm1.zip`,
+the deterministic HACS archive of the integration (HACS installs it because
+`hacs.json` sets `zip_release`), and the programmer wheel the app installs by
+version. Each has an SPDX SBOM, a line in `SHA256SUMS`, and provenance and
+SBOM attestations. The release workflow's summary prints the verification
+commands; the short form is `gh attestation verify <asset> -R trooperthorn/ha_int_elkm1`.
+The app's Dockerfile checks the wheel against `SHA256SUMS` before installing it.
+
 ## Runtime knobs
 
 The options flow allows a poll interval up to 300 seconds. After connecting, the

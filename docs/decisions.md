@@ -1,5 +1,17 @@
 # Decisions
 
+## 2026-09-06, the app installs a checksummed wheel from the release, not a git ref
+
+The Supervisor builds the app on the host, and its build context is the app
+folder alone, so the service cannot be copied in. Installing from `git+...@main`
+worked but meant the app's contents depended on whatever main was at install
+time and had no artifact to attest. The release now builds a wheel, attests it,
+and lists it in `SHA256SUMS`; the Dockerfile downloads the wheel for its own
+version and verifies the checksum before installing. Rejected: publishing a
+multi-arch image with cosign, which is stronger but is a second pipeline to
+operate; it stays in the backlog. Rejected: installing from the release tag
+over git, which pins the commit but leaves nothing for `gh attestation verify`.
+
 Dated decisions with the alternative rejected and why. Entries marked "recorded" were
 carried out of code comments on 2026-09-03; the decision itself predates that date.
 

@@ -45,6 +45,33 @@ panel's programming, and the serial number into the panel identity. It does
 not read the RP access code or MAC address columns at all: the RP code is a
 credential this application only ever accepts per login.
 
+## Supply chain of the app
+
+The app container is built on the Home Assistant host, so what reaches it is
+what can be verified:
+
+- The release workflow builds the programmer wheel from the tagged commit,
+  generates an SPDX SBOM for it, records its SHA-256 in `SHA256SUMS`, and
+  attests both build provenance and the SBOM with GitHub's attestation
+  service. The same is done for the HACS archive of the integration.
+- The app Dockerfile downloads the wheel for its own version from that
+  release and refuses to install it unless the checksum matches
+  `SHA256SUMS`. It never installs from a moving git ref in production;
+  the git path exists only so CI can scan a pull request's image.
+- Before every merge, CI builds that image, checks the runtime it contains
+  (the interpreter version, the package import, no git left behind), and
+  fails on HIGH or CRITICAL vulnerabilities in its installed packages.
+  `run.sh` is checked with ShellCheck. Bandit runs over the service source
+  as well as the integration.
+
+What this does not cover, said plainly: the wheel's Python dependencies are
+resolved at image build time on the host from PyPI and the Home Assistant
+wheel index at whatever versions satisfy the ranges, so the SBOM describes
+the programmer package, not the container that ends up running. Pinning
+those dependencies is in the backlog. Verification of the attestations at
+build time on the host is also not done; the checksum file is trusted over
+TLS from GitHub, which is the same trust the git path had.
+
 ## What is not implemented on purpose
 
 - The secure-network login variant appends 16 bytes of AES ciphertext under

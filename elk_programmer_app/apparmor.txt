@@ -31,6 +31,11 @@ profile elk_programmer flags=(attach_disconnected,mediate_deleted) {
   /opt/elk/** rix,
   /usr/lib/python3*/** r,
 
-  # Network: ingress from the Supervisor, TCP to the panel, and the core API proxy.
+  # The panel's RS-232 port, mapped in by uart: true.
+  /dev/ttyUSB* rw,
+  /dev/ttyACM* rw,
+  /dev/serial/** r,
+
+  # Network: ingress from the Supervisor, the core API proxy, and TCP to a panel.
   network tcp,
 }

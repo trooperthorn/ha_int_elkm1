@@ -1,0 +1,4 @@
+# The service runs on the app container's Python 3.12; the formatter and the
+# upgrade rules must not introduce 3.14-only syntax here.
+extend = "../pyproject.toml"
+target-version = "py312"

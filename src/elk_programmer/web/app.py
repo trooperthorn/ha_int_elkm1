@@ -36,6 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import __version__
+from ..hass import HomeAssistant, HomeAssistantError, IntegrationRelease
 from ..model import specs
 from ..model.account import Account
 from ..model.records import decode_record, encode_record, explain_flags
@@ -72,8 +73,14 @@ class Settings:
             "true",
             "yes",
         )
+        self.default_method = env.get("ELK_PROGRAMMER_CONNECTION", "network")
         self.default_host = env.get("ELK_PROGRAMMER_HOST", "")
         self.default_port = int(env.get("ELK_PROGRAMMER_PORT", "2101") or 2101)
+        self.default_serial_port = env.get("ELK_PROGRAMMER_SERIAL_PORT", "")
+        self.default_baud = int(env.get("ELK_PROGRAMMER_BAUD", "115200") or 115200)
+        self.release_integration = env.get(
+            "ELK_PROGRAMMER_RELEASE_INTEGRATION", "false"
+        ).lower() in ("1", "true", "yes")
         self.supervisor_token = env.get("SUPERVISOR_TOKEN", "")
 
     @property
@@ -98,6 +105,11 @@ class State:
         self.access = AccessControl(settings.data_dir, settings.allowed_users)
         self.idle_task: asyncio.Task[None] | None = None
         self._sends: set[asyncio.Future[None]] = set()
+        self.release: IntegrationRelease | None = None
+        if settings.app_mode and settings.release_integration and settings.supervisor_token:
+            self.release = IntegrationRelease(
+                HomeAssistant(settings.supervisor_token), settings.data_dir / "session_open.json"
+            )
 
     def broadcast(self, payload: dict[str, Any]) -> None:
         text = json.dumps(payload)
@@ -143,6 +155,7 @@ async def _idle_watch() -> None:
         if state.session is not None:
             await state.session.close()
             state.session = None
+        await _restore_integration("", "")
         if settings.supervisor_token:
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
@@ -154,6 +167,15 @@ async def _idle_watch() -> None:
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    if state.release and state.release.pending():
+        # A previous run disabled the integration and did not get to restore it.
+        try:
+            restored = await state.release.restore()
+            state.access.audit.record(
+                "integration_restored_after_restart", "", "", entries=restored
+            )
+        except HomeAssistantError as err:
+            _LOGGER.error("integration still released: %s", err)
     if settings.app_mode and settings.idle_minutes > 0:
         state.idle_task = asyncio.create_task(_idle_watch())
     yield
@@ -551,6 +573,43 @@ def import_mdb(body: MdbRequest, request: Request) -> dict[str, Any]:
         source.close()
 
 
+async def _release_integration(user_id: str, user_name: str) -> None:
+    if state.release is None:
+        return
+    try:
+        entries = await state.release.release()
+    except HomeAssistantError as err:
+        state.access.audit.record("integration_release_failed", user_id, user_name, error=str(err))
+        raise HTTPException(502, f"could not release the integration: {err}") from err
+    state.access.audit.record("integration_released", user_id, user_name, entries=entries)
+
+
+async def _restore_integration(user_id: str, user_name: str) -> None:
+    if state.release is None or not state.release.pending():
+        return
+    try:
+        entries = await state.release.restore()
+    except HomeAssistantError as err:
+        state.access.audit.record("integration_restore_failed", user_id, user_name, error=str(err))
+        _LOGGER.error("%s", err)
+        return
+    state.access.audit.record("integration_restored", user_id, user_name, entries=entries)
+
+
+@app.get("/api/defaults")
+def connection_defaults() -> dict[str, Any]:
+    """What the connect dialog should start with; app options win over the account."""
+    return {
+        "from_app": settings.app_mode,
+        "method": settings.default_method,
+        "host": settings.default_host,
+        "port": settings.default_port,
+        "serial_port": settings.default_serial_port,
+        "baud": settings.default_baud,
+        "release_integration": state.release is not None,
+    }
+
+
 class ConnectRequest(BaseModel):
     method: str = "network"
     host: str = ""
@@ -567,19 +626,25 @@ async def panel_connect(body: ConnectRequest, request: Request) -> dict[str, Any
         raise HTTPException(409, "already connected")
     host = body.host or settings.default_host
     port = body.port or settings.default_port
+    serial_port = body.serial_port or settings.default_serial_port
+    baud = body.baud or settings.default_baud
+    user_id, user_name = _remote_user(request)
+    await _release_integration(user_id, user_name)
     try:
         if body.method == "serial":
-            transport: TcpTransport = await SerialTransport.open(body.serial_port, body.baud)
+            transport: TcpTransport = await SerialTransport.open(serial_port, baud)
         else:
             transport = await TcpTransport.connect(host, port)
     except OSError as err:
         _LOGGER.error("could not open panel transport (%s): %s", body.method, err)
+        await _restore_integration(user_id, user_name)
         raise HTTPException(400, "could not open the connection to the panel") from err
     session = Session(transport, on_trace=state.on_trace)
     try:
         info = await session.login(body.rp_code)
     except SessionError as err:
         await transport.close()
+        await _restore_integration(user_id, user_name)
         _audit(
             request,
             "panel_login_failed",
@@ -604,6 +669,7 @@ async def panel_disconnect(request: Request) -> dict[str, Any]:
         await state.session.close()
         state.session = None
         _audit(request, "panel_disconnect")
+    await _restore_integration(*_remote_user(request))
     return {"ok": True}
 
 

@@ -5,6 +5,7 @@ fastapi>=0.141
 uvicorn[standard]>=0.40
 serialx>=1.9.0
 httpx>=0.28
+websockets>=13
 pytest>=9
 pytest-asyncio
 ruff
