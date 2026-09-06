@@ -35,6 +35,9 @@ Dated open items.
   and `_end` services, the `remote_programming` binary sensor, the two events, and the
   Repair issues, as specified in `app.md`; then the app's calls to them through the core
   API proxy.
+- 2026-09-06, the app Dockerfile installs the service from `main`; once a release
+  that contains the service exists, install from the release tag (`v${BUILD_VERSION}`)
+  so the app version and the service version are the same commit.
 - 2026-09-06, publish the app image (the Dockerfile installs the service from the
   GitHub repository, which does not exist yet) and add the release baseline to both
   repositories.

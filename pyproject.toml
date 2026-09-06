@@ -9,7 +9,9 @@ build-backend = "setuptools.build_meta"
 name = "elk-programmer"
 version = "2026.09.06.1"
 description = "Installer programming application for Elk-M1 Gold panels, a replacement for ElkRP"
-requires-python = ">=3.14"
+# The app container runs the Alpine base image's Python (3.12 on Alpine 3.23);
+# CI proves the service on 3.12 and 3.14.
+requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
   "fastapi>=0.141",
