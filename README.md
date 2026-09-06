@@ -7,17 +7,49 @@
 A Home Assistant custom integration for **Elk-M1 Gold** and **M1EZ8** security/automation
 control panels, connected over a direct serial/USB cable.
 
-**Serial/USB is the only supported connection method.** Network connectivity through an
-M1XEP Ethernet module was removed entirely (not merely undocumented) as a deliberate
-security decision: the M1XEP's TLS support went no further than TLS 1.0 by default and
-required disabling OpenSSL's cipher-strength floor and allowing legacy insecure
-renegotiation just to interoperate, and a serial/USB connection has no network attack
-surface at all. See `docs/decisions.md` (2026-09-05) for the full reasoning. If you were
-previously connected over the network, that config entry has no supported upgrade path -
-reconnect the panel via serial/USB and set the integration up again.
-
 *This is a community-developed integration and is not officially affiliated with Elk
 Products, Inc.*
+
+## Security Advisory
+
+**Serial/USB is the only supported connection method.** Network connectivity through an
+M1XEP Ethernet module was removed entirely (2026-09-05, not merely undocumented) as a
+deliberate security decision. If you were previously connected over the network, that
+config entry has no supported upgrade path - reconnect the panel via serial/USB and set
+the integration up again. Full reasoning and the exact code removed: `docs/decisions.md`
+(2026-09-05).
+
+**What the network path did wrong:**
+
+* The config flow's `TLS_VERSIONS` mapping offered four schemes in code (`elks`/
+  `elksv1_0` both pinned to **TLS 1.0**, `elksv1_2`, `elksv1_3`), but the setup UI only
+  ever exposed two secure choices - `"secure"` and `"TLS 1.2"` - and `"secure"` (TLS 1.0)
+  was the **default**. A brand-new install on the standard secure port landed on TLS 1.0
+  unless the person setting it up happened to notice and manually pick TLS 1.2 instead.
+  TLS 1.3 was fully implemented in code but had no path to select it anywhere in the UI.
+  TLS 1.0 has been deprecated industry-wide since 2018 (dropped from PCI-DSS compliance
+  that year) and carries known weaknesses (BEAST, downgrade-class attacks).
+* Worse, every scheme - including the better-labeled "TLS 1.2" option - built its SSL
+  context with `ssl_context.set_ciphers("DEFAULT:@SECLEVEL=0")` and
+  `ssl_context.options |= OP_LEGACY_SERVER_CONNECT`, regardless of chosen version.
+  `SECLEVEL=0` disables OpenSSL's minimum-security-level enforcement, the floor that
+  normally blocks weak/export-grade ciphers and undersized keys.
+  `OP_LEGACY_SERVER_CONNECT` re-enables insecure TLS renegotiation - the behavior class
+  CVE-2009-3555 was about - which modern OpenSSL disables by default. Combined with no
+  certificate verification at all (`check_hostname=False`, `verify_mode=CERT_NONE`,
+  expected for a local embedded device's self-signed cert but compounding the above),
+  picking "TLS 1.2" did not actually get a modern-security connection: it got TLS 1.2
+  layered on the same weakened cipher floor and legacy renegotiation as the TLS 1.0 path.
+* Whether real M1XEP firmware in the field *required* TLS 1.0 to function at all, versus
+  that default simply never having been revisited, was not verifiable from any source
+  available to this repository (neither its own docs nor the manufacturer's RS-232
+  protocol spec cover the M1XEP's TLS implementation - only the ASCII command protocol
+  layered on top of it).
+
+Given that unresolved uncertainty, and that serial/USB has no network attack surface at
+all, the network transport - TLS handling, UDP discovery, credential exchange, and the
+config-flow steps built around it - was removed entirely rather than patched to a safer
+default.
 
 ## Architecture
 
