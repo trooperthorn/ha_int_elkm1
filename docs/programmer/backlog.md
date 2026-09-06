@@ -31,9 +31,6 @@ Dated open items.
   characters is unverified.
 - 2026-09-06, keypad flag byte 3 maps enum names A to F onto F1 to F6 by
   assumption; verify against the form's control bindings.
-- 2026-09-06, the app's calls to `elkm1.programming_session_start` and `_end` through
-  the core API proxy (the integration side is done); on serial the start call must go
-  before the entry is disabled and the end call after it is re-enabled.
 - 2026-09-06, a Repair issue when the integration's entry is disabled with no
   programming claim active; needs a place to run while the entry is disabled, so it
   belongs to the app side or to a domain-level listener, not the coordinator.

@@ -105,11 +105,14 @@ class State:
         self.access = AccessControl(settings.data_dir, settings.allowed_users)
         self.idle_task: asyncio.Task[None] | None = None
         self._sends: set[asyncio.Future[None]] = set()
+        self.hass: HomeAssistant | None = None
         self.release: IntegrationRelease | None = None
-        if settings.app_mode and settings.release_integration and settings.supervisor_token:
-            self.release = IntegrationRelease(
-                HomeAssistant(settings.supervisor_token), settings.data_dir / "session_open.json"
-            )
+        if settings.app_mode and settings.supervisor_token:
+            self.hass = HomeAssistant(settings.supervisor_token)
+            if settings.release_integration:
+                self.release = IntegrationRelease(
+                    self.hass, settings.data_dir / "session_open.json"
+                )
 
     def broadcast(self, payload: dict[str, Any]) -> None:
         text = json.dumps(payload)
@@ -156,6 +159,7 @@ async def _idle_watch() -> None:
             await state.session.close()
             state.session = None
         await _restore_integration("", "")
+        await _end_claim("", "")
         if settings.supervisor_token:
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
@@ -573,6 +577,45 @@ def import_mdb(body: MdbRequest, request: Request) -> dict[str, Any]:
         source.close()
 
 
+CLAIM_SOURCE = "elk_programmer"
+
+
+async def _claim_session(user_id: str, user_name: str, purpose: str) -> None:
+    """Tell the integration who is about to program the panel.
+
+    The claim is advisory tracking, so a failure is audited and the session
+    goes ahead; the integration then reports the session as unattributed,
+    which is the honest state. On serial this runs before the entry is
+    disabled, so the claim is recorded while the integration can still see it.
+    """
+    if state.hass is None:
+        return
+    try:
+        await state.hass.call_service(
+            "elkm1",
+            "programming_session_start",
+            {"source": CLAIM_SOURCE, "user": user_id, "purpose": purpose},
+        )
+    except HomeAssistantError as err:
+        state.access.audit.record("session_claim_failed", user_id, user_name, error=str(err))
+        return
+    state.access.audit.record("session_claimed", user_id, user_name, purpose=purpose)
+
+
+async def _end_claim(user_id: str, user_name: str) -> None:
+    """Report the session closed; runs after the integration is restored on serial."""
+    if state.hass is None:
+        return
+    try:
+        await state.hass.call_service(
+            "elkm1", "programming_session_end", {"source": CLAIM_SOURCE, "user": user_id}
+        )
+    except HomeAssistantError as err:
+        state.access.audit.record("session_claim_end_failed", user_id, user_name, error=str(err))
+        return
+    state.access.audit.record("session_claim_ended", user_id, user_name)
+
+
 async def _release_integration(user_id: str, user_name: str) -> None:
     if state.release is None:
         return
@@ -580,6 +623,7 @@ async def _release_integration(user_id: str, user_name: str) -> None:
         entries = await state.release.release()
     except HomeAssistantError as err:
         state.access.audit.record("integration_release_failed", user_id, user_name, error=str(err))
+        await _end_claim(user_id, user_name)
         raise HTTPException(502, f"could not release the integration: {err}") from err
     state.access.audit.record("integration_released", user_id, user_name, entries=entries)
 
@@ -629,6 +673,7 @@ async def panel_connect(body: ConnectRequest, request: Request) -> dict[str, Any
     serial_port = body.serial_port or settings.default_serial_port
     baud = body.baud or settings.default_baud
     user_id, user_name = _remote_user(request)
+    await _claim_session(user_id, user_name, "programming")
     await _release_integration(user_id, user_name)
     try:
         if body.method == "serial":
@@ -638,6 +683,7 @@ async def panel_connect(body: ConnectRequest, request: Request) -> dict[str, Any
     except OSError as err:
         _LOGGER.error("could not open panel transport (%s): %s", body.method, err)
         await _restore_integration(user_id, user_name)
+        await _end_claim(user_id, user_name)
         raise HTTPException(400, "could not open the connection to the panel") from err
     session = Session(transport, on_trace=state.on_trace)
     try:
@@ -645,6 +691,7 @@ async def panel_connect(body: ConnectRequest, request: Request) -> dict[str, Any
     except SessionError as err:
         await transport.close()
         await _restore_integration(user_id, user_name)
+        await _end_claim(user_id, user_name)
         _audit(
             request,
             "panel_login_failed",
@@ -670,6 +717,7 @@ async def panel_disconnect(request: Request) -> dict[str, Any]:
         state.session = None
         _audit(request, "panel_disconnect")
     await _restore_integration(*_remote_user(request))
+    await _end_claim(*_remote_user(request))
     return {"ok": True}
 
 

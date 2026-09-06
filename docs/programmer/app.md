@@ -79,10 +79,14 @@ into a pause that rejects every command with an explicit error until the
 "disconnected" broadcast, then resyncs on the installer-mode-exited
 broadcast. That is the backstop.
 
-The explicit hand-off is for the app to call the integration's
-`elkm1.programming_session_start` service before login and
-`elkm1.programming_session_end` in its finally block, passing its slug, the
-HA user id, and the purpose. The integration correlates the claim with the
+The app calls the integration's `elkm1.programming_session_start` service
+before anything else in a connect (before the entry is disabled on serial)
+and `elkm1.programming_session_end` after the integration is restored, on
+every exit path: disconnect, failed transport, failed login, failed release,
+and idle stop. It passes its slug `elk_programmer`, the HA user id from the
+ingress header, and the purpose. A failed claim is audited and the session
+goes ahead, because the claim is tracking, not authorization; the
+integration then reports the session as unattributed. The integration correlates the claim with the
 panel's RP broadcast and exposes:
 
 - `binary_sensor.<panel>_remote_programming`, on between the RP-connected
