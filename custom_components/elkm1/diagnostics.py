@@ -11,6 +11,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
 from .models import ElkRuntimeData
+from .programming import async_get_tracker
 
 TO_REDACT = {
     CONF_PASSWORD,
@@ -66,6 +67,7 @@ async def async_get_config_entry_diagnostics(
             ),
         }
 
+    diagnostics["programming"] = async_get_tracker(hass).diagnostics()
     if data is None:
         return diagnostics
 

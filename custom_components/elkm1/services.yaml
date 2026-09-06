@@ -176,6 +176,45 @@ get_security_summary:
       selector:
         text:
 
+programming_session_start:
+  name: Programming session start
+  description: Announce that a programming tool (the Elk Programmer app) is about to open a remote programming session, so the session is attributed instead of reported as unknown.
+  fields:
+    source:
+      name: Source
+      description: The tool announcing the session, for example the app slug.
+      required: true
+      example: elk_programmer
+      selector:
+        text:
+    user:
+      name: User
+      description: The Home Assistant user id operating the tool.
+      selector:
+        text:
+    purpose:
+      name: Purpose
+      description: receive, send, or verify.
+      example: receive
+      selector:
+        text:
+
+programming_session_end:
+  name: Programming session end
+  description: Report that the announced programming session has closed.
+  fields:
+    source:
+      name: Source
+      description: The tool that announced the session.
+      required: true
+      selector:
+        text:
+    user:
+      name: User
+      description: The Home Assistant user id operating the tool.
+      selector:
+        text:
+
 alarmo_auto_setup:
   name: "Alarmo Auto-Setup"
   description: "Auto-configure Alarmo with discovered ELK-M1 zones."

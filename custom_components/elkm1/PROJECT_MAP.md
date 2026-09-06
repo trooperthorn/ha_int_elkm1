@@ -44,6 +44,10 @@ correctly.
   the normalized `ElkPanelData` snapshot builder, and command methods (arm/disarm,
   bypass, display_message, speak_word/phrase, set_time) that entities/services call
   into rather than talking to `helpers/elk/` objects directly.
+* `programming.py` - remote programming session tracking: the domain-wide claim store
+  (`.storage/elkm1.programming`), the match against the panel's own `RP` status, the
+  `elkm1.programming_started`/`_ended` events, and the two Repair issues. See
+  `docs/design.md`, "Programming session tracking".
 * `const.py` - domain constants, config keys, and `ELK_ELEMENTS` (the M1 Gold's
   hardware-maximum element counts, since `helpers/elk/elements.py`'s `Elements` always
   allocates that many `Zone`/`Output`/etc. objects regardless of what's actually

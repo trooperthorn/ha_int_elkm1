@@ -26,6 +26,8 @@ from .const import (
     SERVICE_ALARM_CLEAR_BYPASS,
     SERVICE_ALARM_FORCE_ARM_AWAY,
     SERVICE_ALARM_FORCE_ARM_STAY,
+    SERVICE_PROGRAMMING_SESSION_END,
+    SERVICE_PROGRAMMING_SESSION_START,
     SERVICE_SENSOR_COUNTER_REFRESH,
     SERVICE_SENSOR_COUNTER_SET,
     SERVICE_SENSOR_ZONE_BYPASS,
@@ -34,6 +36,7 @@ from .const import (
 )
 from .coordinator import ElkDataUpdateCoordinator
 from .models import ElkRuntimeData
+from .programming import async_get_tracker
 
 SPEAK_SERVICE_SCHEMA = vol.Schema(
     {
@@ -57,6 +60,14 @@ DISPLAY_MESSAGE_SERVICE_SCHEMA = vol.Schema(
         vol.Optional("beep", default=False): cv.boolean,
         vol.Optional("clear", default=1): vol.All(vol.Coerce(int), vol.Range(min=0, max=2)),
         vol.Optional("timeout", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=65535)),
+    }
+)
+
+PROGRAMMING_SESSION_SCHEMA = vol.Schema(
+    {
+        vol.Required("source"): cv.string,
+        vol.Optional("user", default=""): cv.string,
+        vol.Optional("purpose", default="unspecified"): cv.string,
     }
 )
 
@@ -124,6 +135,18 @@ async def _async_display_message_service(service: ServiceCall) -> None:
         clear=service.data["clear"],
         timeout=service.data["timeout"],
     )
+
+
+async def _async_programming_session_start(service: ServiceCall) -> None:
+    """The Elk Programmer app announces a session before it logs in to the panel."""
+    await async_get_tracker(service.hass).async_claim(
+        service.data["source"], service.data["user"], service.data["purpose"]
+    )
+
+
+async def _async_programming_session_end(service: ServiceCall) -> None:
+    """The app reports that its session closed."""
+    await async_get_tracker(service.hass).async_end(service.data["source"], service.data["user"])
 
 
 async def _async_get_security_summary(service: ServiceCall) -> ServiceResponse:
@@ -227,6 +250,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         "display_message",
         _async_display_message_service,
         DISPLAY_MESSAGE_SERVICE_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PROGRAMMING_SESSION_START,
+        _async_programming_session_start,
+        PROGRAMMING_SESSION_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PROGRAMMING_SESSION_END,
+        _async_programming_session_end,
+        PROGRAMMING_SESSION_SCHEMA,
     )
     hass.services.async_register(
         DOMAIN,

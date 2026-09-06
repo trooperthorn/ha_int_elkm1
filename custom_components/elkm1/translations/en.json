@@ -127,6 +127,9 @@
       },
       "trouble_fire": {
         "name": "Fire"
+      },
+      "remote_programming": {
+        "name": "Remote programming"
       }
     },
     "sensor": {
@@ -199,6 +202,14 @@
     "deprecated_sensor_scripts": {
       "description": "The sensor {entity_name} (`{entity_id}`) is deprecated because it has been replaced with `{replacement_entity_id}`.\n\nThe sensor was used in the following automations or scripts:\n{items}\n\nUpdate the above automations or scripts to use the replacement entity, then disable the deprecated sensor to have it removed after the next restart.",
       "title": "[%key:component::elkm1::issues::deprecated_sensor::title%]"
+    },
+    "programming_unattributed": {
+      "title": "Elk-M1 remote programming session with no announced source",
+      "description": "The panel reported a remote programming session starting at {started} that no tool announced through elkm1.programming_session_start. If this was ElkRP or another tool you ran yourself, no action is needed; otherwise review who has the RP access code. The issue clears when a tool claims the running session; otherwise dismiss it once you have reviewed it."
+    },
+    "programming_claim_unmatched": {
+      "title": "Elk-M1 programming session announced but never seen",
+      "description": "{source} announced a programming session at {claimed_at}, but the panel has not reported a remote programming session since and the integration is still connected. The tool may have failed to open its session, or it may have run while this integration was disabled. It clears when the tool reports the session ended."
     }
   },
   "services": {
@@ -381,6 +392,38 @@
         }
       },
       "name": "Get security summary"
+    },
+    "programming_session_start": {
+      "name": "Programming session start",
+      "description": "Announce that a programming tool is about to open a remote programming session, so the session is attributed instead of reported as unknown.",
+      "fields": {
+        "source": {
+          "name": "Source",
+          "description": "The tool announcing the session, for example the app slug."
+        },
+        "user": {
+          "name": "User",
+          "description": "The Home Assistant user id operating the tool."
+        },
+        "purpose": {
+          "name": "Purpose",
+          "description": "receive, send, or verify."
+        }
+      }
+    },
+    "programming_session_end": {
+      "name": "Programming session end",
+      "description": "Report that the announced programming session has closed.",
+      "fields": {
+        "source": {
+          "name": "Source",
+          "description": "The tool that announced the session."
+        },
+        "user": {
+          "name": "User",
+          "description": "The Home Assistant user id operating the tool."
+        }
+      }
     }
   }
 }

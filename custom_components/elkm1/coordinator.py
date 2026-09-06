@@ -43,6 +43,7 @@ from .helpers.troublestatus import (
     parse_troubles,
 )
 from .models import AreaData, ElkPanelData
+from .programming import async_get_tracker
 from .protocol import (
     FIRE_ZONE_DEFINITIONS,
     alarm_is_fire,
@@ -167,6 +168,8 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         elk.add_handler("KC_DETAIL", self._handle_keypad_detail)
         elk.add_handler("timeout", self._handle_command_timeout)
         elk.add_handler("disconnected", self._handle_disconnected)
+        elk.add_handler("RP", self._handle_rp_status)
+        elk.add_handler("IE", self._handle_installer_exit)
         for msg_type in self._broadcast_counts:
             elk.add_handler(msg_type, self._count_broadcast(msg_type))
         if elk.panel is not None:
@@ -382,6 +385,23 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             },
         )
 
+    def _handle_rp_status(self, remote_programming_status: Any) -> None:
+        """Feed the panel's own RP (remote programming) status to the session tracker.
+
+        The panel cannot say who is programming it; programming.py matches this
+        against the claim the Elk Programmer app announced, or records the
+        session as unattributed and raises a Repair issue.
+        """
+        connected = self._get_enum_value(remote_programming_status) != 0
+        if self.config_entry is not None:
+            async_get_tracker(self.hass).async_rp_status(self.config_entry.entry_id, connected)
+        self.async_set_updated_data(self._build_normalized_data())
+
+    def _handle_installer_exit(self) -> None:
+        """IE: programming ended, from a keypad or a remote session; the hub resyncs."""
+        if self.config_entry is not None:
+            async_get_tracker(self.hass).async_rp_status(self.config_entry.entry_id, False)
+
     def _handle_alarm_memory(self, alarm_memory: list[bool]) -> None:
         """Fire an HA event when alarm memory changes."""
         self.hass.bus.async_fire(
@@ -552,6 +572,8 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
 
     async def _async_update_data(self) -> ElkPanelData:
         """Request a protocol-safe status refresh; push remains the primary path."""
+        if self.config_entry is not None:
+            async_get_tracker(self.hass).async_check_claim(self.config_entry.entry_id)
         if not self._elk or not self._elk.is_connected():
             raise UpdateFailed("Not connected to Elk-M1")
 

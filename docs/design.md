@@ -6,6 +6,27 @@ coordinator); this document carries the reasoning behind choices that the map on
 Wire and device facts live in `protocol.md`; configuration and release operations in
 `operations.md`; dated decisions with their rejected alternatives in `decisions.md`.
 
+## Programming session tracking
+
+The panel reports only that a remote programming session is open (`RP`)
+or has ended (`RP` disconnected, `IE`); it cannot say who opened it, because
+the Elk Programmer app and ElkRP look identical to it. `programming.py`
+keeps a domain-wide tracker in `.storage/elkm1.programming`: the current
+claim, made by a tool through `elkm1.programming_session_start` before it
+logs in, and the last twenty sessions. The panel's status is matched against
+the claim: a session with a claim is attributed to the claimed source and
+user; a session with no claim is recorded as `unattributed`, fires the same
+events with `attributed: false`, and raises a Repair issue. A claim that the
+panel never confirms while the integration stays connected raises the
+opposite Repair issue after five minutes; on a serial installation the entry
+is disabled for the session, so that check never runs there, which is the
+expected state and not a fault. The `remote_programming` binary sensor on
+the panel device shows the panel's own status with the tracker's attribution
+as attributes, and `elkm1.programming_started` and `elkm1.programming_ended`
+carry the same fields for automations and HA SOC. The claim is advisory:
+anything that can call the service can claim to be the app, so the sensor
+tells what the panel saw and the claim tells who admitted to it.
+
 ## Connection and coordinator
 
 The coordinator is `local_push`. Once the panel's Global Programming "Xmit ... Changes"
