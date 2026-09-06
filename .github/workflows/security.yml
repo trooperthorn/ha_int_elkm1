@@ -80,6 +80,7 @@ jobs:
         run: |
           docker run --rm --entrypoint /bin/sh local/elk-programmer:${{ github.sha }} -c '/opt/elk/bin/python -c "import sys, elk_programmer; assert sys.version_info >= (3, 12); print(elk_programmer.__version__)"'
           docker run --rm --entrypoint /bin/sh local/elk-programmer:${{ github.sha }} -c '! command -v git'
+          docker run --rm --entrypoint /bin/sh local/elk-programmer:${{ github.sha }} -c '! command -v tempio'
           docker run --rm --entrypoint /bin/sh local/elk-programmer:${{ github.sha }} -c 'test -x /run.sh'
       # Read-only token and a pinned Grype; HIGH/CRITICAL findings fail the pull request.
       - name: Scan installed packages
