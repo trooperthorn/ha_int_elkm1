@@ -10,7 +10,7 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/trooperthorn/ha_int_elkm1/issues",
   "requirements": [
-    "serialx==1.9.0"
+    "serialx>=1.9.0,<2"
   ],
   "version": "2026.09.06.7"
 }

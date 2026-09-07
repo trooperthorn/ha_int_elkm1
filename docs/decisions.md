@@ -530,3 +530,23 @@ role as an automation fallback when a service call omits `code` (see the earlier
 discussion this session, reflected in the README's new "PIN and password fields"
 section) - masking only changes whether the value is ever shown in the clear, not who
 can trigger an arm/disarm without typing it.
+
+## 2026-09-06, `serialx` is declared as a range, not an exact pin
+
+Home Assistant installs a custom integration's requirements with its own
+`package_constraints.txt` passed as a pip constraint (`homeassistant/requirements.py`,
+`homeassistant/util/package.py`). Core 2026.9.0 constrained `serialx==1.9.0`; core
+2026.9.1 moved that to `serialx==1.10.0`. With the manifest pinned to `1.9.0` exactly,
+the two pins could never both hold, pip reported "you require serialx==1.9.0 and
+serialx==1.10.0", and the integration failed to set up on every host that took the
+2026.9.1 point release. The manifest now declares `serialx>=1.9.0,<2`, so core's
+constraint picks the version and a core point release cannot strand the integration.
+hassfest only demands exact pins for core integrations (`script/hassfest/requirements.py`,
+the `integration.core` branch), so a range is valid for a custom one. The integration
+imports `serialx` directly and never the `serial` or `serial_asyncio` compatibility
+names, which serialx 1.10.0 moved into the separate `serialx-compat` package, so the
+range is safe across that change. The developer pins (`requirements-dev.txt`) stay
+exact and track core's current constraint so local runs match the host.
+
+Rejected: bumping the exact pin to `1.10.0`, which would break again on the next core
+point release and would refuse to install on a host still on 2026.9.0.
