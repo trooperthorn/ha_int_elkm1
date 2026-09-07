@@ -1,5 +1,24 @@
 # Decisions
 
+## 2026-09-07, the coordinator forces a transport reconnect after repeated silent poll timeouts
+
+Live incident: the status-refresh poll (`AS`/`AZ`/`CS`/`SS`/`LW`) timed out once,
+after which the panel answered nothing at all - not that poll, not any push
+broadcast, not even a from-scratch config-flow baud probe on the same port
+minutes later. The read/write stream tasks never raised (no OSError, no EOF),
+so `_entry_connect`'s own backoff-and-retry loop had nothing to react to and
+never re-opened the port; the entry sat "unavailable" indefinitely with no
+further log activity, surviving for hours until the port was manually
+power-cycled. `_async_update_data` now counts consecutive poll timeouts and,
+at `POLL_TIMEOUT_RECONNECT_THRESHOLD` (2, ~60s of total silence), closes and
+reopens the transport itself instead of waiting on a stream that has gone
+quiet without failing. Rejected: lowering `POLL_RESPONSE_TIMEOUT` instead -
+that would make transient panel slowness noisier without addressing a
+transport that never signals failure at all. Unverified: whether the silence
+in this incident was a dead/reseated USB-serial adapter or the panel itself -
+the from-scratch baud probe getting no reply either points at the transport
+layer or the panel, not at anything in this integration's connection state.
+
 ## 2026-09-06, the app installs a checksummed wheel from the release, not a git ref
 
 The Supervisor builds the app on the host, and its build context is the app
