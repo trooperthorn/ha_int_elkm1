@@ -1,6 +1,6 @@
 name: "Elk Programmer"
 description: "Installer programming for Elk-M1 Gold panels, started on demand"
-version: "2026.09.06.5"
+version: "2026.09.06.6"
 slug: "elk_programmer"
 url: "https://github.com/trooperthorn/ha_int_elkm1/"
 init: false
