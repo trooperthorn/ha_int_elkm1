@@ -14,13 +14,16 @@ import json
 import os
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-SCRYPT_N = 2**15
+# 16 MiB of scrypt memory (128 * n * r); OpenSSL refuses the default 32 MiB cap exactly.
+SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
+SCRYPT_MAXMEM = 64 * 1024 * 1024
 SESSION_TTL = 15 * 60
 STEP_UP_TTL = 15 * 60
 LOCKOUT_FAILURES = 5
@@ -46,7 +49,13 @@ class BadPassphrase(AuthError):
 
 def _hash(passphrase: str, salt: bytes) -> bytes:
     return hashlib.scrypt(
-        passphrase.encode("utf-8"), salt=salt, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=32
+        passphrase.encode("utf-8"),
+        salt=salt,
+        n=SCRYPT_N,
+        r=SCRYPT_R,
+        p=SCRYPT_P,
+        maxmem=SCRYPT_MAXMEM,
+        dklen=32,
     )
 
 
@@ -122,6 +131,7 @@ class AuditLog:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._last_hash = self._tail_hash()
+        self.on_record: Callable[[], None] | None = None
 
     def _tail_hash(self) -> str:
         if not self.path.is_file():
@@ -154,6 +164,8 @@ class AuditLog:
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
         self._last_hash = str(entry["hash"])
+        if self.on_record is not None:
+            self.on_record()
         return entry
 
     def verify(self) -> tuple[bool, int]:

@@ -61,16 +61,35 @@ class HomeAssistant:
             raise HomeAssistantError("unexpected config entry listing")
         return [e for e in data if isinstance(e, dict)]
 
-    async def call_service(self, domain: str, service: str, data: dict[str, Any]) -> None:
-        """Call a core service, the way the SOC probe reports to its integration."""
-        async with httpx.AsyncClient(timeout=15, transport=self._transport) as client:
+    async def call_service(
+        self,
+        domain: str,
+        service: str,
+        data: dict[str, Any],
+        return_response: bool = False,
+    ) -> dict[str, Any] | None:
+        """Call a core service, the way the SOC probe reports to its integration.
+
+        With ``return_response`` the service's own response is returned
+        (core wraps it under ``service_response``).
+        """
+        params = {"return_response": "true"} if return_response else None
+        async with httpx.AsyncClient(timeout=30, transport=self._transport) as client:
             r = await client.post(
                 f"{self._http_base}/core/api/services/{domain}/{service}",
+                params=params,
                 json=data,
                 headers={"Authorization": f"Bearer {self._token}"},
             )
         if r.status_code not in (200, 201):
             raise HomeAssistantError(f"{domain}.{service} failed with HTTP {r.status_code}")
+        if not return_response:
+            return None
+        try:
+            body = r.json()
+        except ValueError as err:
+            raise HomeAssistantError(f"{domain}.{service} returned no JSON") from err
+        return body if isinstance(body, dict) else None
 
     async def set_entry_disabled(self, entry_id: str, disabled: bool) -> bool:
         """Disable or enable one entry; return whether core requires a restart."""

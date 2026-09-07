@@ -32,22 +32,25 @@ uart: true
 
 map: []
 
+# serial_port is mandatory (null default) so the device picker shows without
+# revealing hidden options; host and port are optional and only for a network XEP.
 options:
   connection: serial
+  serial_port: null
   baud: 115200
-  host: ""
-  port: 2101
   release_integration: true
+  forward_audit: true
   allowed_users: []
   idle_minutes: 15
   read_only: true
 schema:
   connection: list(serial|network)
-  serial_port: device(subsystem=tty)?
+  serial_port: device(subsystem=tty)
   baud: int(300,115200)
   host: str?
-  port: port
+  port: port?
   release_integration: bool
+  forward_audit: bool
   allowed_users:
     - str
   idle_minutes: int(1,120)

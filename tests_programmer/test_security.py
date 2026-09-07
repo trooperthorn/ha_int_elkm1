@@ -122,3 +122,14 @@ def test_audit_chain_detects_tampering(tmp_path: Path) -> None:
     again = AuditLog(tmp_path / "audit.jsonl")
     again.record("d", "u", "U")
     assert again.verify() == (False, 2)
+
+
+def test_production_scrypt_parameters_fit_the_openssl_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real parameters must compute; OpenSSL refuses anything at or above 32 MiB by default."""
+    monkeypatch.setattr(security, "SCRYPT_N", 2**14)
+    store = security.PassphraseStore(tmp_path / "p.json")
+    store.set("correct horse battery staple")
+    assert store.check("correct horse battery staple")
+    assert 128 * security.SCRYPT_N * security.SCRYPT_R < security.SCRYPT_MAXMEM

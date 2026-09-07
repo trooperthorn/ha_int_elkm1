@@ -71,6 +71,20 @@ panel_disconnect, receive_started, receive_finished, record_read, record_sent
 (with the frame in hex), record_verify, idle_stop. The RP access code and
 the login frame are never written to the log or the trace.
 
+## Audit forwarding to HA SOC
+
+With `forward_audit` on, every line of the app's audit log is pushed to
+`ha_soc.ingest_audit` through the core proxy, in order, in batches of up to
+200, with the line number as the sequence number. HA SOC verifies the hash
+chain on receipt and answers with the last sequence it accepted, which the app
+keeps under `/data/soc_push.json` so a restart resumes where HA SOC is rather
+than where the app thinks it was. A `gap` answer means HA SOC holds less than
+the app believed and the app resends from HA SOC's head; any other refusal
+stops forwarding and is reported by `/api/audit/forwarding` and the log,
+because a chain HA SOC will not accept is something a person must look at.
+The per-source secret is generated once under `/data/soc_secret` (mode 0600)
+and pinned by HA SOC on the first accepted call; it never leaves the host.
+
 ## Coexistence with the integration
 
 The panel arbitrates: while an RP session is open it answers ASCII polls with
