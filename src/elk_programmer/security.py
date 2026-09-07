@@ -19,9 +19,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-SCRYPT_N = 2**15
+# 16 MiB of scrypt memory (128 * n * r); OpenSSL refuses the default 32 MiB cap exactly.
+SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
+SCRYPT_MAXMEM = 64 * 1024 * 1024
 SESSION_TTL = 15 * 60
 STEP_UP_TTL = 15 * 60
 LOCKOUT_FAILURES = 5
@@ -47,7 +49,13 @@ class BadPassphrase(AuthError):
 
 def _hash(passphrase: str, salt: bytes) -> bytes:
     return hashlib.scrypt(
-        passphrase.encode("utf-8"), salt=salt, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=32
+        passphrase.encode("utf-8"),
+        salt=salt,
+        n=SCRYPT_N,
+        r=SCRYPT_R,
+        p=SCRYPT_P,
+        maxmem=SCRYPT_MAXMEM,
+        dklen=32,
     )
 
 

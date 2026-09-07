@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Setting the app passphrase failed on the host with an OpenSSL memory-limit
+  error: scrypt now uses 16 MiB with an explicit cap. The serial device picker
+  is shown by default and the network options are optional.
 - The audit log is forwarded to HA SOC's `ingest_audit` service in order,
   with resume from HA SOC's acknowledged sequence, when `forward_audit` is on.
 - Every panel session is announced to the `elkm1` integration through its

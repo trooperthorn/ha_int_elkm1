@@ -9,9 +9,9 @@ ingress. It is stopped by default and stops itself when idle.
 | Option | Meaning |
 | --- | --- |
 | `connection` | `serial` for the panel's RS-232 port on this host (the usual case), `network` for an M1XEP. |
-| `serial_port` | The serial device, chosen from the host's tty devices. Use the by-id path. |
+| `serial_port` | The serial device, chosen from the host's tty devices; shown by default and required. Use the by-id path. |
 | `baud` | The panel's Port 0 rate, Global option G34. Factory default 115200. |
-| `host`, `port` | Only for `network`: the M1XEP address and its non-secure port. |
+| `host`, `port` | Only for `network`: the M1XEP address and its non-secure port (2101 when unset). Optional, so they sit behind the unused-options toggle until needed. |
 | `forward_audit` | Push every audit record to the HA SOC integration (`ha_soc.ingest_audit`), which verifies the hash chain and keeps the history alongside its own audit log. Needs HA SOC installed; otherwise the app logs a warning and keeps trying. |
 | `release_integration` | Disable the `elkm1` integration's entries for the duration of a session and re-enable them afterwards. A serial port is exclusive, so this is required for `serial`; during the session the alarm entities are absent and automation commands fail. |
 | `allowed_users` | Home Assistant user ids permitted to open the app. Everyone else receives a refusal on every request, including admins. Find a user id under Settings, People, the user, in the ID field. |
