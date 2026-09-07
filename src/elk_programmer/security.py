@@ -9,12 +9,12 @@ the previous one, so an edit anywhere breaks the chain from that point on.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
 import hmac
 import json
 import os
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
