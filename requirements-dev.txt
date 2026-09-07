@@ -10,4 +10,4 @@ pytest-asyncio==1.4.0
 pytest-homeassistant-custom-component==0.13.362
 
 # Integration Dependencies
-serialx==1.9.0
+serialx==1.10.0
