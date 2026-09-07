@@ -895,6 +895,45 @@ async def test_async_update_data_raises_update_failed_when_send_fails(hass):
         await coordinator._async_update_data()
 
 
+async def test_async_update_data_forces_reconnect_after_repeated_silent_timeouts(hass):
+    """A transport that never raises but also never answers must still recover.
+
+    Regression test for the 2026-09-07 incident (docs/decisions.md): the
+    stream tasks stayed alive with nothing to react to, so nothing ever
+    reopened the port on its own.
+    """
+    coordinator = _make_coordinator(hass)
+    elk = MagicMock()
+    elk.is_connected.return_value = True
+    coordinator._elk = elk
+    manager = MagicMock()
+    manager.async_stop = AsyncMock()
+    coordinator._connection_manager = manager
+
+    from custom_components.elkm1 import coordinator as coordinator_module
+
+    with patch.object(coordinator_module, "POLL_RESPONSE_TIMEOUT", 0.01):
+        with pytest.raises(UpdateFailed, match="timed out waiting for"):
+            await coordinator._async_update_data()
+        manager.async_stop.assert_not_called()
+        manager.start.assert_not_called()
+        assert coordinator._consecutive_poll_timeouts == 1
+
+        with pytest.raises(UpdateFailed, match="timed out waiting for"):
+            await coordinator._async_update_data()
+
+    manager.async_stop.assert_awaited_once()
+    manager.start.assert_called_once()
+    assert coordinator._consecutive_poll_timeouts == 0
+
+
+async def test_async_update_data_resets_timeout_count_on_disconnect(hass):
+    coordinator = _make_coordinator(hass)
+    coordinator._consecutive_poll_timeouts = 1
+    coordinator._handle_disconnected()
+    assert coordinator._consecutive_poll_timeouts == 0
+
+
 # --------------------------------------------------------------------------
 # Command-guard and simple write-path error branches
 # --------------------------------------------------------------------------

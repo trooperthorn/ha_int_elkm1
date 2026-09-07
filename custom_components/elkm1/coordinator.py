@@ -59,6 +59,11 @@ _LOGGER = logging.getLogger(__name__)
 CONNECT_TIMEOUT = 30.0
 COMMAND_RESPONSE_TIMEOUT = 6.0
 POLL_RESPONSE_TIMEOUT = 12.0
+# Consecutive silent polls before we stop trusting this transport and force a
+# fresh open. A stream that never raises (no OSError, no EOF) but also never
+# answers leaves _entry_connect's own reconnect loop with nothing to react to;
+# see docs/decisions.md.
+POLL_TIMEOUT_RECONNECT_THRESHOLD = 2
 
 
 class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
@@ -99,6 +104,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         )
         self.last_push_update: datetime | None = None
         self.last_poll_success: datetime | None = None
+        self._consecutive_poll_timeouts = 0
         self.data = ElkPanelData()
 
     @property
@@ -347,6 +353,7 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
         """Mark entities unavailable while the entry-owned task reconnects."""
         if self._connection_manager is not None:
             self._connection_manager.mark_disconnected()
+        self._consecutive_poll_timeouts = 0
         self.async_set_update_error(UpdateFailed("ELK-M1 transport disconnected"))
 
     def _handle_timer_event(
@@ -599,6 +606,15 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
                 await refreshed.wait()
         except TimeoutError as err:
             missing = ", ".join(sorted(expected - received))
+            self._consecutive_poll_timeouts += 1
+            if self._consecutive_poll_timeouts >= POLL_TIMEOUT_RECONNECT_THRESHOLD:
+                self._consecutive_poll_timeouts = 0
+                _LOGGER.warning(
+                    "ELK-M1 answered nothing for %d consecutive polls; "
+                    "forcing the transport closed and reopening it",
+                    POLL_TIMEOUT_RECONNECT_THRESHOLD,
+                )
+                await self._force_reconnect()
             raise UpdateFailed(f"ELK-M1 status refresh timed out waiting for: {missing}") from err
         except (ConnectionError, OSError) as err:
             raise UpdateFailed(f"ELK-M1 status refresh could not be sent: {err}") from err
@@ -606,8 +622,23 @@ class ElkDataUpdateCoordinator(DataUpdateCoordinator[ElkPanelData]):
             for command, handler in handlers.items():
                 self._elk.remove_handler(command, handler)
 
+        self._consecutive_poll_timeouts = 0
         self.last_poll_success = datetime.now(UTC)
         return self._build_normalized_data()
+
+    async def _force_reconnect(self) -> None:
+        """Close and reopen the transport after it stops answering silently.
+
+        A dead USB-serial adapter or an unresponsive panel doesn't always
+        raise on write/read - the stream tasks stay alive with nothing to
+        react to, so _entry_connect's own backoff-and-retry loop never
+        triggers on its own. See docs/decisions.md.
+        """
+        manager = self._connection_manager
+        if manager is None:
+            return
+        await manager.async_stop()
+        manager.start()
 
     def _ensure_command_ready(self) -> None:
         """Reject writes that cannot currently reach the panel."""
