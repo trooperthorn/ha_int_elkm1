@@ -9,6 +9,7 @@ the previous one, so an edit anywhere breaks the chain from that point on.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 import hmac
 import json
 import os
@@ -122,6 +123,7 @@ class AuditLog:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._last_hash = self._tail_hash()
+        self.on_record: Callable[[], None] | None = None
 
     def _tail_hash(self) -> str:
         if not self.path.is_file():
@@ -154,6 +156,8 @@ class AuditLog:
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
         self._last_hash = str(entry["hash"])
+        if self.on_record is not None:
+            self.on_record()
         return entry
 
     def verify(self) -> tuple[bool, int]:

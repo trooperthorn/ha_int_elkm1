@@ -14,6 +14,9 @@ configuration:
   port:
     name: Panel port
     description: Only for a network connection; 2101 is the XEP's non-secure port.
+  forward_audit:
+    name: Forward the audit log to HA SOC
+    description: Push every audit record to the HA SOC integration's ingest service, which verifies the chain and keeps the history with the rest of the SOC audit log.
   release_integration:
     name: Release the integration during a session
     description: Disable the elkm1 integration's entries while a programming session is open so the serial port is free, and re-enable them afterwards. Required for serial.

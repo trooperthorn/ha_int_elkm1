@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The audit log is forwarded to HA SOC's `ingest_audit` service in order,
+  with resume from HA SOC's acknowledged sequence, when `forward_audit` is on.
 - Every panel session is announced to the `elkm1` integration through its
   `programming_session_start` and `programming_session_end` services, so
   the session is attributed to the app and the Home Assistant user rather

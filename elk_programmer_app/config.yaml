@@ -38,6 +38,7 @@ options:
   host: ""
   port: 2101
   release_integration: true
+  forward_audit: true
   allowed_users: []
   idle_minutes: 15
   read_only: true
@@ -48,6 +49,7 @@ schema:
   host: str?
   port: port
   release_integration: bool
+  forward_audit: bool
   allowed_users:
     - str
   idle_minutes: int(1,120)

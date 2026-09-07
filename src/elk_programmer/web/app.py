@@ -46,6 +46,7 @@ from ..protocol.panel import UNMAPPED_REASON, WIRE, wire_for
 from ..protocol.session import SerialTransport, Session, SessionError, TcpTransport, TraceEntry
 from ..protocol.sync import RECEIVE_ORDER, ReceiveReport, receive_all, send_record, verify_record
 from ..security import AccessControl, AuthError, LockedOut, NotSetUp, Session as AuthSession
+from ..soc_push import SocPusher
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +82,11 @@ class Settings:
         self.release_integration = env.get(
             "ELK_PROGRAMMER_RELEASE_INTEGRATION", "false"
         ).lower() in ("1", "true", "yes")
+        self.forward_audit = env.get("ELK_PROGRAMMER_FORWARD_AUDIT", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         self.supervisor_token = env.get("SUPERVISOR_TOKEN", "")
 
     @property
@@ -107,12 +113,16 @@ class State:
         self._sends: set[asyncio.Future[None]] = set()
         self.hass: HomeAssistant | None = None
         self.release: IntegrationRelease | None = None
+        self.soc: SocPusher | None = None
         if settings.app_mode and settings.supervisor_token:
             self.hass = HomeAssistant(settings.supervisor_token)
             if settings.release_integration:
                 self.release = IntegrationRelease(
                     self.hass, settings.data_dir / "session_open.json"
                 )
+            if settings.forward_audit:
+                self.soc = SocPusher(self.hass, settings.data_dir, self.access.audit.path)
+                self.access.audit.on_record = self.soc.schedule
 
     def broadcast(self, payload: dict[str, Any]) -> None:
         text = json.dumps(payload)
@@ -182,6 +192,9 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
             _LOGGER.error("integration still released: %s", err)
     if settings.app_mode and settings.idle_minutes > 0:
         state.idle_task = asyncio.create_task(_idle_watch())
+    if state.soc is not None:
+        # Catch up on anything written while HA SOC was unreachable or the app was stopped.
+        state.soc.schedule()
     yield
     if state.idle_task:
         state.idle_task.cancel()
@@ -900,6 +913,20 @@ def panel_trace() -> list[dict[str, Any]]:
 def explain(spec_name: str, field_name: str, value: int) -> dict[str, int]:
     spec = specs.SPECS_BY_NAME[spec_name]
     return explain_flags(spec.field_by_name(field_name), value)
+
+
+@app.get("/api/audit/forwarding")
+def audit_forwarding(request: Request) -> dict[str, Any]:
+    """Where HA SOC is in reading this app's audit chain."""
+    _require_session(request)
+    if state.soc is None:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "last_acknowledged_seq": state.soc.last_seq,
+        "running": state.soc.running,
+        "last_error": state.soc.last_error,
+    }
 
 
 @app.get("/api/audit")
