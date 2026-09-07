@@ -39,6 +39,7 @@ class SocPusher:
         self._secret_path = data_dir / "soc_secret"
         self._lock = asyncio.Lock()
         self._task: asyncio.Task[dict[str, Any]] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self.last_seq = 0
         self.last_error: str | None = None
         self._load()
@@ -93,11 +94,26 @@ class SocPusher:
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
+    def attach(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Remember the event loop; audit records are written from worker threads too."""
+        self._loop = loop
+
     def schedule(self) -> None:
-        """Start a push unless one is already running; never blocks the caller."""
+        """Start a push unless one is already running; safe from any thread, never blocks.
+
+        The audit log calls this after every record, and many records come
+        from synchronous endpoints that run on a worker thread, so the task
+        is created on the loop thread through call_soon_threadsafe. Before
+        the loop is attached (startup) the record waits for the catch-up push.
+        """
+        if self._loop is None or self._loop.is_closed():
+            return
+        self._loop.call_soon_threadsafe(self._start_on_loop)
+
+    def _start_on_loop(self) -> None:
         if self.running:
             return
-        self._task = asyncio.create_task(self.push())
+        self._task = asyncio.get_running_loop().create_task(self.push())
 
     async def push(self) -> dict[str, Any]:
         """Send pending records until HA SOC is caught up or refuses."""

@@ -19,15 +19,30 @@ class RecordingCore:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.fail = False
+        self.ingested = 0
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         if request.headers.get("Authorization") != "Bearer tok":
             return httpx.Response(401)
-        if self.fail:
-            return httpx.Response(500)
         import json
 
-        self.calls.append((request.url.path, json.loads(request.content or b"{}")))
+        body = json.loads(request.content or b"{}")
+        if request.url.path.endswith("/ha_soc/ingest_audit"):
+            n = len(body["records"])
+            self.ingested += n
+            return httpx.Response(
+                200,
+                json={
+                    "service_response": {
+                        "accepted": n,
+                        "last_seq": body["records"][-1]["seq"],
+                        "rejected": None,
+                    }
+                },
+            )
+        if self.fail:
+            return httpx.Response(500)
+        self.calls.append((request.url.path, body))
         return httpx.Response(200, json=[])
 
 
@@ -52,6 +67,7 @@ def app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     monkeypatch.setenv("ELK_PROGRAMMER_IDLE_MINUTES", "0")
     monkeypatch.setenv("ELK_PROGRAMMER_READ_ONLY", "false")
     monkeypatch.setenv("ELK_PROGRAMMER_RELEASE_INTEGRATION", "false")
+    monkeypatch.setenv("ELK_PROGRAMMER_FORWARD_AUDIT", "true")
     monkeypatch.setenv("SUPERVISOR_TOKEN", "tok")
     monkeypatch.setattr(security, "FAILURE_DELAY", 0.0)
     monkeypatch.setattr(security, "SCRYPT_N", 2**8)
@@ -63,6 +79,25 @@ def app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     module.state.hass.use_transport(httpx.MockTransport(core.handle))
     with TestClient(module.app) as client:
         yield module, client, core
+
+
+def test_setup_on_a_worker_thread_forwards_the_audit_record(app_env: Any) -> None:
+    """Passphrase setup is a synchronous endpoint; the forwarding hook must not need the loop."""
+    module, client, core = app_env
+    hdr = {"X-Remote-User-Id": "alice-id", "X-Remote-User-Name": "Alice"}
+    r = client.post("/api/auth/setup", json={"passphrase": "correct horse battery"}, headers=hdr)
+    assert r.status_code == 200, r.text
+    status = client.get("/api/audit/forwarding", headers=hdr).json()
+    assert status["enabled"] is True
+    # The push ran on the loop and HA SOC acknowledged the setup and login records.
+    import time
+
+    for _ in range(50):
+        if core.ingested >= 2:
+            break
+        time.sleep(0.05)
+    assert core.ingested >= 2
+    assert module.state.soc is not None and module.state.soc.last_seq >= 2
 
 
 def test_failed_transport_still_claims_then_ends(app_env: Any) -> None:

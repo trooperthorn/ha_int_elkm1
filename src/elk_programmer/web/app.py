@@ -194,6 +194,7 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
         state.idle_task = asyncio.create_task(_idle_watch())
     if state.soc is not None:
         # Catch up on anything written while HA SOC was unreachable or the app was stopped.
+        state.soc.attach(asyncio.get_running_loop())
         state.soc.schedule()
     yield
     if state.idle_task:
