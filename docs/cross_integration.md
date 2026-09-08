@@ -65,6 +65,54 @@ just that it happened. `last_user_name` falls back to `User <n>` if that
 user number has no name programmed on the panel, and to `Unknown` before any
 `IC` message has been seen this session.
 
+### Dashboard: collapsing the code entry (automation-layer)
+
+Neither this integration nor Alarmo controls how a Lovelace card asks for the
+code; that is a card-level setting. The core `alarm-panel` card always renders
+the keypad. Niels Faber's `alarmo-card` (the Alarmo author's own card,
+installed through HACS) does not:
+
+```yaml
+type: custom:alarmo-card
+entity: alarm_control_panel.alarmo
+keep_keypad_visible: false
+```
+
+`keep_keypad_visible` defaults to `false`, which is already the behaviour of
+"show the arm buttons, and only expand the code entry once an arm mode is
+selected". Set it explicitly so a later card edit does not silently change it.
+`use_code_dialog: true` is the alternative presentation - the same code entry
+as a modal popup rather than an inline expansion - and cannot be combined with
+`keep_keypad_visible`, `hide_keypad`, or `button_scale_keypad`.
+
+#### Why there is no biometric option here
+
+Replacing the code with a phone fingerprint or face unlock is not offered by
+this integration, and the reason is worth recording so it is not re-proposed:
+
+* A biometric check performed in the card is not a security control. The card
+  runs in the browser; `alarm_control_panel.alarm_disarm` remains callable
+  directly over the authenticated websocket API, so the gate is friction, not
+  a boundary. A real control needs the credential verified server-side, with
+  the Elk user code held there and never sent to the frontend.
+* WebAuthn platform authenticators are not dependable in the Home Assistant
+  companion app, which is where a phone fingerprint would be used. Android's
+  WebView does not expose Credential Manager to page script, and iOS WKWebView
+  needs associated-domain wiring the companion app does not perform. It works
+  in a plain browser, which is not the target.
+* The supported per-action biometric path on iOS is an actionable notification
+  carrying `authenticationRequired`, which forces device authentication before
+  the action runs and reports back through the `mobile_app_notification_action`
+  event. It is iOS-only; the Android companion app has no equivalent per-action
+  flag. Verify the key against the current companion documentation before
+  building on it.
+* The zero-code approximation is the companion app's own biometric App Lock
+  combined with Alarmo's `code_arm_required` / `code_disarm_required` set to
+  `false`. This authenticates at app open rather than per arm or disarm, which
+  is a coarser guarantee, and should be treated as convenience rather than as
+  the panel's access control - the ELK panel's own user codes remain the
+  authority over the hardware.
+
 ## Better Thermostat (code-level)
 
 Two separate paths, because the more broadly useful one doesn't require the
