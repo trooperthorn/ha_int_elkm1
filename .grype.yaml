@@ -1,0 +1,10 @@
+# Grype configuration for the app image vulnerability scan (security.yml).
+# Only list findings that come from the upstream base image with no fix
+# available yet. Remove each entry as soon as apk upgrade picks up a fix.
+ignore:
+  - vulnerability: CVE-2026-85091
+    package:
+      name: zlib
+      type: apk
+    # High in ghcr.io/home-assistant/base:3.24 (Alpine 3.24). No fixed zlib
+    # package published yet; the Dockerfile already runs apk upgrade.
