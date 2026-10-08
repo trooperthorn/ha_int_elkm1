@@ -13,7 +13,7 @@ import os
 from typing import Any
 from urllib.parse import urlparse
 
-import voluptuous as vol
+import probatio
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -128,11 +128,11 @@ class Elkm1ConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(
+            data_schema=probatio.Schema(
                 {
-                    vol.Required(CONF_SERIAL_PORT): selector.SerialPortSelector(),
-                    vol.Optional(CONF_PREFIX, default="elkm1"): str,
-                    vol.Optional(CONF_PIN, default=""): _PASSWORD_SELECTOR,
+                    probatio.Required(CONF_SERIAL_PORT): selector.SerialPortSelector(),
+                    probatio.Optional(CONF_PREFIX, default="elkm1"): str,
+                    probatio.Optional(CONF_PIN, default=""): _PASSWORD_SELECTOR,
                 }
             ),
             errors=errors,
@@ -200,16 +200,16 @@ class Elkm1ConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema(
+            data_schema=probatio.Schema(
                 {
-                    vol.Required(
+                    probatio.Required(
                         CONF_SERIAL_PORT,
                         default=str(current.get(CONF_SERIAL_PORT, "")),
                     ): selector.SerialPortSelector(),
-                    vol.Optional(
+                    probatio.Optional(
                         CONF_PREFIX, default=current.get(CONF_PREFIX, "elkm1")
                     ): str,
-                    vol.Optional(
+                    probatio.Optional(
                         CONF_PIN, default=current.get(CONF_PIN, "")
                     ): _PASSWORD_SELECTOR,
                 }
@@ -218,13 +218,13 @@ class Elkm1ConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
-def _options_schema(default: int) -> vol.Schema:
+def _options_schema(default: int) -> probatio.Schema:
     """Return the operational options schema."""
-    return vol.Schema(
+    return probatio.Schema(
         {
-            vol.Optional(CONF_POLL_INTERVAL, default=default): vol.All(
-                vol.Coerce(int),
-                vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL),
+            probatio.Optional(CONF_POLL_INTERVAL, default=default): probatio.All(
+                probatio.Coerce(int),
+                probatio.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL),
             )
         }
     )
