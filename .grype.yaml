@@ -1,4 +1,13 @@
 # Grype configuration for the app image vulnerability scan (security.yml).
 # Only list findings that come from the upstream base image with no fix
 # available yet. Remove each entry as soon as apk upgrade picks up a fix.
-ignore: []
+ignore:
+  # curl 8.22.0-r0 in ghcr.io/home-assistant/base:3.24 (Alpine 3.24). Added
+  # 2026-10-23: no fixed curl in the Alpine 3.24 secdb or 3.24-stable aports yet,
+  # and apk upgrade in the Dockerfile already pulls every published fix.
+  # Remove once https://secdb.alpinelinux.org/v3.24/main.json lists
+  # CVE-2026-92392 under curl, or the base image moves past 8.22.0-r0.
+  - vulnerability: CVE-2026-92392
+    package:
+      name: curl
+      type: apk
