@@ -6,7 +6,6 @@ mypy==2.4.0
 
 # Home Assistant Core & Testing
 pytest==9.0.3
-pytest-asyncio==1.4.0
 pytest-homeassistant-custom-component==0.13.371
 
 # Integration Dependencies
