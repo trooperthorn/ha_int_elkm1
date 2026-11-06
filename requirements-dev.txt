@@ -5,7 +5,7 @@ ruff==0.17.3
 mypy==2.4.0
 
 # Home Assistant Core & Testing
-pytest==9.0.3
+pytest==9.2.0
 pytest-homeassistant-custom-component==0.13.371
 
 # Integration Dependencies
