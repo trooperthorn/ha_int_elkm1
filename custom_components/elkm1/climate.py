@@ -65,7 +65,7 @@ async def async_setup_entry(
 class ElkThermostat(ElkEntity, ClimateEntity):
     """Representation of an Elk-M1 thermostat."""
 
-    _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
+    _attr_native_temperature_unit = UnitOfTemperature.FAHRENHEIT
     _attr_min_temp = MIN_TEMP
     _attr_max_temp = MAX_TEMP
     _attr_supported_features = (
@@ -122,13 +122,13 @@ class ElkThermostat(ElkEntity, ClimateEntity):
 
     @property
     @override
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         obj = self._get_obj()
         return float(obj.current_temp) if obj else None
 
     @property
     @override
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         obj = self._get_obj()
         if not obj or self.hvac_mode not in (HVACMode.HEAT, HVACMode.COOL):
             return None
@@ -137,7 +137,7 @@ class ElkThermostat(ElkEntity, ClimateEntity):
 
     @property
     @override
-    def target_temperature_high(self) -> float | None:
+    def native_target_temperature_high(self) -> float | None:
         obj = self._get_obj()
         if not obj or self.hvac_mode != HVACMode.HEAT_COOL:
             return None
@@ -145,7 +145,7 @@ class ElkThermostat(ElkEntity, ClimateEntity):
 
     @property
     @override
-    def target_temperature_low(self) -> float | None:
+    def native_target_temperature_low(self) -> float | None:
         obj = self._get_obj()
         if not obj or self.hvac_mode != HVACMode.HEAT_COOL:
             return None
