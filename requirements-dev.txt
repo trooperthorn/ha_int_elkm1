@@ -2,7 +2,7 @@
 ruff==0.17.3
 
 # Type Checking
-mypy==2.4.0
+mypy==2.4.1
 
 # Home Assistant Core & Testing
 pytest==9.0.3
