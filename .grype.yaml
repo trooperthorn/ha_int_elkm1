@@ -1,4 +1,23 @@
 # Grype configuration for the app image vulnerability scan (security.yml).
 # Only list findings that come from the upstream base image with no fix
 # available yet. Remove each entry as soon as apk upgrade picks up a fix.
-ignore: []
+ignore:
+  # Alpine sqlite-libs 3.53.4-r0 High CVEs, no fixed apk published as of
+  # 2026-11-19; the Dockerfile already runs apk upgrade. Remove these entries
+  # once Alpine ships a fixed sqlite-libs and the scan no longer reports them.
+  - vulnerability: CVE-2026-119586
+    package:
+      name: sqlite-libs
+      type: apk
+  - vulnerability: CVE-2026-119379
+    package:
+      name: sqlite-libs
+      type: apk
+  - vulnerability: CVE-2026-119374
+    package:
+      name: sqlite-libs
+      type: apk
+  - vulnerability: CVE-2026-119373
+    package:
+      name: sqlite-libs
+      type: apk
