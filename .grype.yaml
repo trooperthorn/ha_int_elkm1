@@ -21,3 +21,10 @@ ignore:
     package:
       name: sqlite-libs
       type: apk
+  # Alpine python3 3.14.10-r1 High CVE-2026-119170, no fixed apk published as
+  # of 2026-11-19; the Dockerfile already runs apk upgrade. Remove this entry
+  # once Alpine ships a fixed python3 and the scan no longer reports it.
+  - vulnerability: CVE-2026-119170
+    package:
+      name: python3
+      type: apk
