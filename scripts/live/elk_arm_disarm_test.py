@@ -16,6 +16,7 @@ affected), stop and tell me - don't keep going on your own judgment call here.
 """
 import getpass
 import time
+
 import serial
 
 PORT = "COM3"

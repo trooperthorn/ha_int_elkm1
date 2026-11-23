@@ -17,6 +17,7 @@ Requires: pip install pyserial
 """
 import getpass
 import time
+
 import serial
 
 PORT = "COM3"
