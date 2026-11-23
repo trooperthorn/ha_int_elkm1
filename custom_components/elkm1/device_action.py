@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import voluptuous as vol
+import probatio
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 
@@ -11,9 +11,9 @@ from .const import DOMAIN
 ACTION_TYPES = {"speak_phrase", "display_message"}
 
 ACTION_SCHEMA = cv.DEVICE_ACTION_BASE_SCHEMA.extend({
-    vol.Required("type"): vol.In(ACTION_TYPES),
-    vol.Optional("phrase_number"): cv.positive_int,
-    vol.Optional("line1"): cv.string,
+    probatio.Required("type"): probatio.In(ACTION_TYPES),
+    probatio.Optional("phrase_number"): cv.positive_int,
+    probatio.Optional("line1"): cv.string,
 })
 
 async def async_get_actions(

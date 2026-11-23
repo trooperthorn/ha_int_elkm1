@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import voluptuous as vol
+import probatio
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -38,42 +38,42 @@ from .coordinator import ElkDataUpdateCoordinator
 from .models import ElkRuntimeData
 from .programming import async_get_tracker
 
-SPEAK_SERVICE_SCHEMA = vol.Schema(
+SPEAK_SERVICE_SCHEMA = probatio.Schema(
     {
-        vol.Required("number"): vol.All(vol.Coerce(int), vol.Range(min=0, max=999)),
-        vol.Optional("prefix", default=""): cv.string,
+        probatio.Required("number"): probatio.All(probatio.Coerce(int), probatio.Range(min=0, max=999)),
+        probatio.Optional("prefix", default=""): cv.string,
     }
 )
 
-SET_TIME_SERVICE_SCHEMA = vol.Schema(
+SET_TIME_SERVICE_SCHEMA = probatio.Schema(
     {
-        vol.Optional("prefix", default=""): cv.string,
+        probatio.Optional("prefix", default=""): cv.string,
     }
 )
 
-DISPLAY_MESSAGE_SERVICE_SCHEMA = vol.Schema(
+DISPLAY_MESSAGE_SERVICE_SCHEMA = probatio.Schema(
     {
-        vol.Optional("prefix", default=""): cv.string,
-        vol.Optional("area", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=8)),
-        vol.Optional("line1", default=""): vol.All(cv.string, vol.Length(max=16)),
-        vol.Optional("line2", default=""): vol.All(cv.string, vol.Length(max=16)),
-        vol.Optional("beep", default=False): cv.boolean,
-        vol.Optional("clear", default=1): vol.All(vol.Coerce(int), vol.Range(min=0, max=2)),
-        vol.Optional("timeout", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=65535)),
+        probatio.Optional("prefix", default=""): cv.string,
+        probatio.Optional("area", default=1): probatio.All(probatio.Coerce(int), probatio.Range(min=1, max=8)),
+        probatio.Optional("line1", default=""): probatio.All(cv.string, probatio.Length(max=16)),
+        probatio.Optional("line2", default=""): probatio.All(cv.string, probatio.Length(max=16)),
+        probatio.Optional("beep", default=False): cv.boolean,
+        probatio.Optional("clear", default=1): probatio.All(probatio.Coerce(int), probatio.Range(min=0, max=2)),
+        probatio.Optional("timeout", default=0): probatio.All(probatio.Coerce(int), probatio.Range(min=0, max=65535)),
     }
 )
 
-PROGRAMMING_SESSION_SCHEMA = vol.Schema(
+PROGRAMMING_SESSION_SCHEMA = probatio.Schema(
     {
-        vol.Required("source"): cv.string,
-        vol.Optional("user", default=""): cv.string,
-        vol.Optional("purpose", default="unspecified"): cv.string,
+        probatio.Required("source"): cv.string,
+        probatio.Optional("user", default=""): cv.string,
+        probatio.Optional("purpose", default="unspecified"): cv.string,
     }
 )
 
-SECURITY_SUMMARY_SCHEMA = vol.Schema(
+SECURITY_SUMMARY_SCHEMA = probatio.Schema(
     {
-        vol.Optional("prefix", default=""): cv.string,
+        probatio.Optional("prefix", default=""): cv.string,
     }
 )
 

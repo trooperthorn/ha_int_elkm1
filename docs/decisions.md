@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-10-08: Minimum Home Assistant is 2026.10.0, schemas use probatio
+
+Core 2026.10 types flow, service and websocket schemas as probatio, so the voluptuous
+schemas failed mypy (developer blog 2026-09-30, "Probatio is our validation engine").
+The integration now imports `probatio` directly, as core does; runtime behavior is
+unchanged because core has validated with probatio since 2026.9. The suite runs on core
+2026.10.0 and `hacs.json` follows the tested core. A network-shaped legacy entry now
+fails migration with a translated `ConfigEntryError` and an error-level repair issue
+that says what to do, instead of a bare `False` that left an unexplained migration error
+(developer blog 2026-09-17). `BinarySensorDeviceClass` is imported from
+`binary_sensor.const`, which exports it explicitly. The climate entity keeps its current
+property names until core 2026.11 ships the `native_` names (developer blog 2026-10-08).
+Rejected: aliasing `probatio as vol`, which core's lint config bans.
+
 ## 2026-09-07, the coordinator forces a transport reconnect after repeated silent poll timeouts
 
 Live incident: the status-refresh poll (`AS`/`AZ`/`CS`/`SS`/`LW`) timed out once,
