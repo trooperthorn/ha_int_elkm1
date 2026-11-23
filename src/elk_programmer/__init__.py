@@ -1,3 +1,3 @@
 """Elk-M1 Gold installer programming application."""
 
-__version__ = "2026.10.08.1"
+__version__ = "2026.11.23.1"
