@@ -1,0 +1,76 @@
+# Grype configuration for the app image vulnerability scan (security.yml).
+# Only list findings that come from the upstream base image with no fix
+# available yet. Remove each entry as soon as apk upgrade picks up a fix.
+ignore:
+  # Alpine sqlite-libs 3.53.4-r0 High CVEs, no fixed apk published as of
+  # 2026-11-19; the Dockerfile already runs apk upgrade. Remove these entries
+  # once Alpine ships a fixed sqlite-libs and the scan no longer reports them.
+  - vulnerability: CVE-2026-119586
+    package:
+      name: sqlite-libs
+      type: apk
+  - vulnerability: CVE-2026-119379
+    package:
+      name: sqlite-libs
+      type: apk
+  - vulnerability: CVE-2026-119374
+    package:
+      name: sqlite-libs
+      type: apk
+  - vulnerability: CVE-2026-119373
+    package:
+      name: sqlite-libs
+      type: apk
+  # Alpine python3 3.14.10-r1 High CVE-2026-119170, no fixed apk published as
+  # of 2026-11-19; the Dockerfile already runs apk upgrade. Remove this entry
+  # once Alpine ships a fixed python3 and the scan no longer reports it.
+  - vulnerability: CVE-2026-119170
+    package:
+      name: python3
+      type: apk
+  # Alpine openssl 3.5.9-r1 (libcrypto3, libssl3) High CVEs, no fixed apk
+  # published as of 2026-11-22: 3.5.9-r1 is the newest openssl in the Alpine
+  # 3.24 secdb and none of these ids is listed there; the Dockerfile already
+  # runs apk upgrade. Remove these entries once
+  # https://secdb.alpinelinux.org/v3.24/main.json lists them under openssl and
+  # the scan no longer reports them.
+  - vulnerability: CVE-2026-124709
+    package:
+      name: libcrypto3
+      type: apk
+  - vulnerability: CVE-2026-124709
+    package:
+      name: libssl3
+      type: apk
+  - vulnerability: CVE-2026-121482
+    package:
+      name: libcrypto3
+      type: apk
+  - vulnerability: CVE-2026-121482
+    package:
+      name: libssl3
+      type: apk
+  - vulnerability: CVE-2026-107494
+    package:
+      name: libcrypto3
+      type: apk
+  - vulnerability: CVE-2026-107494
+    package:
+      name: libssl3
+      type: apk
+  - vulnerability: CVE-2026-107493
+    package:
+      name: libcrypto3
+      type: apk
+  - vulnerability: CVE-2026-107493
+    package:
+      name: libssl3
+      type: apk
+  - vulnerability: CVE-2026-84786
+    package:
+      name: libcrypto3
+      type: apk
+  - vulnerability: CVE-2026-84786
+    package:
+      name: libssl3
+      type: apk

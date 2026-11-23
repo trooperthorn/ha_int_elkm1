@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.exceptions import ConfigEntryError
+from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.elkm1 import async_migrate_entry
@@ -76,7 +79,13 @@ async def test_migrate_entry_rejects_a_network_shaped_entry(hass):
     )
     entry.add_to_hass(hass)
 
-    assert await async_migrate_entry(hass, entry) is False
+    with pytest.raises(ConfigEntryError):
+        await async_migrate_entry(hass, entry)
+    issue = ir.async_get(hass).async_get_issue(
+        DOMAIN, f"network_entry_unsupported_{entry.entry_id}"
+    )
+    assert issue is not None
+    assert issue.translation_key == "network_entry_unsupported"
 
 
 async def test_migrate_legacy_serial_entry(hass):

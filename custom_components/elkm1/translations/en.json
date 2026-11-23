@@ -188,6 +188,9 @@
     },
     "area_command_failed": {
       "message": "Error {action} area {area_num}: {error}"
+    },
+    "network_entry_unsupported": {
+      "message": "This Elk-M1 entry uses a network connection, which this integration no longer supports"
     }
   },
   "issues": {
@@ -210,6 +213,10 @@
     "programming_claim_unmatched": {
       "title": "Elk-M1 programming session announced but never seen",
       "description": "{source} announced a programming session at {claimed_at}, but the panel has not reported a remote programming session since and the integration is still connected. The tool may have failed to open its session, or it may have run while this integration was disabled. It clears when the tool reports the session ended."
+    },
+    "network_entry_unsupported": {
+      "title": "Elk-M1 network connection is no longer supported",
+      "description": "The entry {title} connects to the panel over the network (M1XEP). This integration now talks to the panel only over a serial connection, so the entry cannot be migrated. Remove the entry, connect the panel through a serial adapter, and add the integration again."
     }
   },
   "services": {

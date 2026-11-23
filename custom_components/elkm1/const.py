@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-import voluptuous as vol
+import probatio
 from homeassistant.const import ATTR_CODE, CONF_ZONE
 from homeassistant.helpers import config_validation as cv
 
@@ -68,7 +68,7 @@ ATTR_VALID = "valid"
 ATTR_VALUE = "value"
 
 ELK_USER_CODE_SERVICE_SCHEMA: dict[Any, Any] = {
-    vol.Required(ATTR_CODE): vol.All(vol.Coerce(int), vol.Range(0, 999999))
+    probatio.Required(ATTR_CODE): probatio.All(probatio.Coerce(int), probatio.Range(0, 999999))
 }
 
 SERVICE_ALARM_BYPASS = "alarm_bypass"
@@ -86,12 +86,12 @@ SERVICE_PROGRAMMING_SESSION_START = "programming_session_start"
 SERVICE_PROGRAMMING_SESSION_END = "programming_session_end"
 
 COUNTER_SET_SERVICE_SCHEMA: dict[Any, Any] = {
-    vol.Required("value"): vol.All(vol.Coerce(int), vol.Range(min=0, max=65535)),
+    probatio.Required("value"): probatio.All(probatio.Coerce(int), probatio.Range(min=0, max=65535)),
 }
 
 ELK_OUTPUT_TURN_ON_FOR_SERVICE_SCHEMA: dict[Any, Any] = {
-    vol.Required(ATTR_DURATION): vol.All(
+    probatio.Required(ATTR_DURATION): probatio.All(
         cv.time_period,
-        vol.Range(min=timedelta(seconds=1), max=timedelta(seconds=65535)),
+        probatio.Range(min=timedelta(seconds=1), max=timedelta(seconds=65535)),
     ),
 }

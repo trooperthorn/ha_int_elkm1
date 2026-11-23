@@ -9,8 +9,16 @@ from urllib.parse import urlparse
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PREFIX, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryError,
+    ConfigEntryNotReady,
+)
+from homeassistant.helpers import (
+    config_validation as cv,
+    device_registry as dr,
+    issue_registry as ir,
+)
 
 from .alarmo_integration import async_setup_alarmo_auto_config
 from .const import (
@@ -79,7 +87,19 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     serial_port = data.get(CONF_SERIAL_PORT)
     legacy_host = str(data.get("host", ""))
     if not serial_port and not legacy_host.startswith("serial://"):
-        return False
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"network_entry_unsupported_{entry.entry_id}",
+            is_fixable=False,
+            issue_domain=DOMAIN,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="network_entry_unsupported",
+            translation_placeholders={"title": entry.title},
+        )
+        raise ConfigEntryError(
+            translation_domain=DOMAIN, translation_key="network_entry_unsupported"
+        )
 
     if not serial_port:
         serial_port = hostname_from_url(legacy_host)
