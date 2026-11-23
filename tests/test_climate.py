@@ -138,7 +138,7 @@ def test_current_temperature_is_none_when_obj_missing():
     entity = _thermostat(0, MagicMock())
     entity._index = 9
 
-    assert entity.current_temperature is None
+    assert entity.native_current_temperature is None
 
 
 def test_current_temperature_reads_from_obj():
@@ -146,14 +146,14 @@ def test_current_temperature_reads_from_obj():
     tstat.current_temp = 72
     entity = _thermostat(0, tstat)
 
-    assert entity.current_temperature == 72.0
+    assert entity.native_current_temperature == 72.0
 
 
 def test_target_temperature_is_none_when_obj_missing():
     entity = _thermostat(0, MagicMock())
     entity._index = 9
 
-    assert entity.target_temperature is None
+    assert entity.native_target_temperature is None
 
 
 def test_target_temperature_is_none_outside_heat_or_cool_mode():
@@ -161,7 +161,7 @@ def test_target_temperature_is_none_outside_heat_or_cool_mode():
     tstat.mode = ThermostatMode.AUTO
     entity = _thermostat(0, tstat)
 
-    assert entity.target_temperature is None
+    assert entity.native_target_temperature is None
 
 
 def test_target_temperature_uses_heat_setpoint_in_heat_mode():
@@ -170,7 +170,7 @@ def test_target_temperature_uses_heat_setpoint_in_heat_mode():
     tstat.heat_setpoint = 68
     entity = _thermostat(0, tstat)
 
-    assert entity.target_temperature == 68.0
+    assert entity.native_target_temperature == 68.0
 
 
 def test_target_temperature_uses_cool_setpoint_in_cool_mode():
@@ -179,14 +179,14 @@ def test_target_temperature_uses_cool_setpoint_in_cool_mode():
     tstat.cool_setpoint = 75
     entity = _thermostat(0, tstat)
 
-    assert entity.target_temperature == 75.0
+    assert entity.native_target_temperature == 75.0
 
 
 def test_target_temperature_high_is_none_when_obj_missing():
     entity = _thermostat(0, MagicMock())
     entity._index = 9
 
-    assert entity.target_temperature_high is None
+    assert entity.native_target_temperature_high is None
 
 
 def test_target_temperature_high_is_none_outside_heat_cool_mode():
@@ -194,7 +194,7 @@ def test_target_temperature_high_is_none_outside_heat_cool_mode():
     tstat.mode = ThermostatMode.HEAT
     entity = _thermostat(0, tstat)
 
-    assert entity.target_temperature_high is None
+    assert entity.native_target_temperature_high is None
 
 
 def test_target_temperature_high_uses_cool_setpoint_in_heat_cool_mode():
@@ -203,14 +203,14 @@ def test_target_temperature_high_uses_cool_setpoint_in_heat_cool_mode():
     tstat.cool_setpoint = 78
     entity = _thermostat(0, tstat)
 
-    assert entity.target_temperature_high == 78.0
+    assert entity.native_target_temperature_high == 78.0
 
 
 def test_target_temperature_low_is_none_when_obj_missing():
     entity = _thermostat(0, MagicMock())
     entity._index = 9
 
-    assert entity.target_temperature_low is None
+    assert entity.native_target_temperature_low is None
 
 
 def test_target_temperature_low_is_none_outside_heat_cool_mode():
@@ -218,7 +218,7 @@ def test_target_temperature_low_is_none_outside_heat_cool_mode():
     tstat.mode = ThermostatMode.COOL
     entity = _thermostat(0, tstat)
 
-    assert entity.target_temperature_low is None
+    assert entity.native_target_temperature_low is None
 
 
 def test_target_temperature_low_uses_heat_setpoint_in_heat_cool_mode():
@@ -227,7 +227,7 @@ def test_target_temperature_low_uses_heat_setpoint_in_heat_cool_mode():
     tstat.heat_setpoint = 65
     entity = _thermostat(0, tstat)
 
-    assert entity.target_temperature_low == 65.0
+    assert entity.native_target_temperature_low == 65.0
 
 
 async def test_async_set_hvac_mode_sends_ts_mode_command():

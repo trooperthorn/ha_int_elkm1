@@ -20,8 +20,8 @@ bypass/write command.
 Prerequisites (native Windows works directly against a COM port; on Linux/
 WSL the serial device must actually be attached to that environment):
 
-    pip install --user homeassistant==2026.9.0
-    pip install --user --no-deps pytest-homeassistant-custom-component==0.13.362
+    pip install --user homeassistant==2026.11.0
+    pip install --user --no-deps pytest-homeassistant==2026.11.0
 
 The harness package is pulled in `--no-deps` deliberately: its pytest plugin
 (`plugins.py`) imports `fcntl` and only runs on Linux/WSL (see the
@@ -52,7 +52,7 @@ async def _run(repo_root: Path, port: str, prefix: str, listen_seconds: float) -
     from homeassistant import loader
     from homeassistant.config_entries import ConfigEntryState
     from homeassistant.helpers import entity_registry as er, frame as frame_helper
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
         async_test_home_assistant,
     )
