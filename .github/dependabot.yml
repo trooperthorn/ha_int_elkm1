@@ -14,3 +14,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      # The harness pins its core exactly; they only resolve together.
+      home-assistant:
+        patterns:
+          - homeassistant
+          - pytest-homeassistant
