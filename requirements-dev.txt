@@ -4,8 +4,7 @@ ruff==0.17.5
 # Type Checking
 mypy==2.4.1
 
-# Home Assistant Core & Testing
-pytest==9.0.3
+# Home Assistant Core & Testing (pytest is pinned by the harness)
 pytest-homeassistant-custom-component==0.13.371
 
 # Integration Dependencies
