@@ -28,3 +28,49 @@ ignore:
     package:
       name: python3
       type: apk
+  # Alpine openssl 3.5.9-r1 (libcrypto3, libssl3) High CVEs, no fixed apk
+  # published as of 2026-11-22: 3.5.9-r1 is the newest openssl in the Alpine
+  # 3.24 secdb and none of these ids is listed there; the Dockerfile already
+  # runs apk upgrade. Remove these entries once
+  # https://secdb.alpinelinux.org/v3.24/main.json lists them under openssl and
+  # the scan no longer reports them.
+  - vulnerability: CVE-2026-124709
+    package:
+      name: libcrypto3
+      type: apk
+  - vulnerability: CVE-2026-124709
+    package:
+      name: libssl3
+      type: apk
+  - vulnerability: CVE-2026-121482
+    package:
+      name: libcrypto3
+      type: apk
+  - vulnerability: CVE-2026-121482
+    package:
+      name: libssl3
+      type: apk
+  - vulnerability: CVE-2026-107494
+    package:
+      name: libcrypto3
+      type: apk
+  - vulnerability: CVE-2026-107494
+    package:
+      name: libssl3
+      type: apk
+  - vulnerability: CVE-2026-107493
+    package:
+      name: libcrypto3
+      type: apk
+  - vulnerability: CVE-2026-107493
+    package:
+      name: libssl3
+      type: apk
+  - vulnerability: CVE-2026-84786
+    package:
+      name: libcrypto3
+      type: apk
+  - vulnerability: CVE-2026-84786
+    package:
+      name: libssl3
+      type: apk
