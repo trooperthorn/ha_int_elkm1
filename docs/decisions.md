@@ -1,5 +1,27 @@
 # Decisions
 
+## 2026-11-23: Test harness is `pytest-homeassistant`, tracking core 2026.11.0
+
+Core 2026.11 requires `httpx2` and aliases `httpx` to it on first import of
+`homeassistant`. `pytest-homeassistant-custom-component` never released for
+2026.11 (its last release, 0.13.375, pins core 2026.10.4, and its README now
+calls the package broken and points to core's own package), and its plugin
+loaded against core 2026.11.0 fails at startup with "httpx was already
+imported". The suite now uses `pytest-homeassistant==2026.11.0`, which
+`home-assistant/core` publishes from `packages/pytest-homeassistant` at the
+same version as the core it is cut from. Imports moved from
+`pytest_homeassistant_custom_component` to `pytest_homeassistant`, the
+`pytest_plugins` line and the `enable_custom_integrations` wrapper in
+`tests/conftest.py` went away because the new plugin loads itself and enables
+custom integrations by default, and `pytest.ini` gained `-p no:respx` and
+`asyncio_default_fixture_loop_scope = function` as the package README
+prescribes. No test was removed or relaxed. The harness pin and the core pin
+now move together; the CI version guard stays a literal.
+
+Rejected: leaving the old harness unpinned (no release supports 2026.11), and
+dropping the harness the way `ha-homekit-pro` does (that suite uses no `hass`
+fixture; this one does in about twenty files).
+
 ## 2026-10-08: Minimum Home Assistant is 2026.10.0, schemas use probatio
 
 Core 2026.10 types flow, service and websocket schemas as probatio, so the voluptuous

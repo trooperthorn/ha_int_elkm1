@@ -39,8 +39,8 @@ Risk levels, and why:
              docs/decisions.md, not tested here.
 
 Prerequisites (same as scripts/live_debug_check.py):
-    pip install --user homeassistant==2026.9.0
-    pip install --user --no-deps pytest-homeassistant-custom-component==0.13.362
+    pip install --user homeassistant==2026.11.0
+    pip install --user --no-deps pytest-homeassistant==2026.11.0
 
 Usage:
     python scripts/live_full_verification.py --list      # see the catalog, no connection made
@@ -270,7 +270,7 @@ async def _step_set_time(ctx: Context) -> None:
     if not await _ask("About to write the panel's real-time clock to the current time"):
         return
     # Deliberately not homeassistant.util.dt.now(): this script's hass
-    # instance comes from pytest_homeassistant_custom_component's test
+    # instance comes from pytest_homeassistant's test
     # harness, which hardcodes hass.config.time_zone to "US/Pacific"
     # regardless of where this machine (or the panel) actually is - using it
     # here would silently write the wrong wall-clock time to a real panel.
@@ -641,7 +641,7 @@ async def _run(repo_root: Path, port: str, prefix: str) -> int:
     from homeassistant import loader
     from homeassistant.config_entries import ConfigEntryState
     from homeassistant.helpers import frame as frame_helper
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
         async_test_home_assistant,
     )

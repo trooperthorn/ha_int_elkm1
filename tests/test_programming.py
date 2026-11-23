@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from homeassistant.helpers import issue_registry as ir
-from pytest_homeassistant_custom_component.common import async_capture_events
+from pytest_homeassistant.common import async_capture_events
 
 from custom_components.elkm1.const import (
     CONF_CONNECTION_TYPE,

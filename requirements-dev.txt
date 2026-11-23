@@ -5,7 +5,7 @@ ruff==0.17.5
 mypy==2.4.1
 
 # Home Assistant Core & Testing (pytest is pinned by the harness)
-pytest-homeassistant-custom-component==0.13.371
+pytest-homeassistant==2026.11.0
 
 # Integration Dependencies
 serialx==1.15.1

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 from homeassistant import config_entries
 from homeassistant.helpers import selector
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.elkm1.config_flow import get_persistent_port_path
 from custom_components.elkm1.const import CONF_PIN, CONF_POLL_INTERVAL, DOMAIN

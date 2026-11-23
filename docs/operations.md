@@ -9,12 +9,20 @@ The gate is the same on a workstation and in CI: `ruff check .`, `mypy
 --config-file mypy.ini custom_components/elkm1`, `pytest -ra --strict-markers
 tests/`, then `python scripts/build_release_artifacts.py --validate-only`.
 Pins live in `requirements-dev.txt` and `requirements-core.txt`. The Home
-Assistant test harness (`pytest-homeassistant-custom-component`) pins the
-beta core it was cut from, and pip refuses to resolve a different core in the
-same install, so the stable `homeassistant` pin lives in its own file and is
-installed second. The CI job asserts the installed core version so a harness
-bump that silently moves the core is caught. The harness imports
-`fcntl`, so on Windows the suite runs under WSL.
+Assistant test harness is `pytest-homeassistant`, published from
+`home-assistant/core` (`packages/pytest-homeassistant`). Each harness release
+pins the exact core release it was cut from, so the harness pin in
+`requirements-dev.txt` and the `homeassistant` pin in `requirements-core.txt`
+carry the same version and are bumped together. The core pin is still
+installed second from its own file, and the CI job asserts the installed core
+version as a literal, so a harness bump that silently moves the core is
+caught. `pytest.ini` passes `-p no:respx`: core aliases `httpx` to `httpx2`
+when `homeassistant` is first imported and refuses to if `httpx` is already
+loaded, which the separate respx pytest plugin would do. The harness's own
+HTTP mocks still use respx. The harness enables custom integrations by
+default, so `tests/conftest.py` needs no `pytest_plugins` line or
+`enable_custom_integrations` wrapper. The harness imports `fcntl`, so on
+Windows the suite runs under WSL.
 
 ## Live hardware debug check
 
