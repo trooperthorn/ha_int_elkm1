@@ -84,7 +84,7 @@ jobs:
           docker run --rm --entrypoint /bin/sh local/elk-programmer:${{ github.sha }} -c 'test -x /run.sh'
       # Read-only token and a pinned Grype; HIGH/CRITICAL findings fail the pull request.
       - name: Scan installed packages
-        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        uses: anchore/scan-action@11983a512817154c80a9db660c1a184be7513ed6 # v7.4.3
         with:
           image: local/elk-programmer:${{ github.sha }}
           fail-build: true
